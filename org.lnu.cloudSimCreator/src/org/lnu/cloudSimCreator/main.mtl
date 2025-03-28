@@ -1,0 +1,631 @@
+[comment encoding = UTF-8 /]
+[module main('http://www.eclipse.org/uml2/5.0.0/UML')]
+
+
+[template public projectGenerator(UMLModel : uml::Model)]'
+[comment @main/]
+[let name : String = UMLModel.name.safe()]
+[file(name + '.java', false, 'UTF-8')]
+package lnu.se.cloud.playground;
+
+import java.util.*;
+import java.util.function.BiConsumer;
+import java.util.stream.Collectors;
+
+import org.cloudsimplus.brokers.DatacenterBroker;
+import org.cloudsimplus.brokers.DatacenterBrokerSimple;
+import org.cloudsimplus.core.CloudSimPlus;
+import org.cloudsimplus.datacenters.Datacenter;
+import org.cloudsimplus.datacenters.DatacenterSimple;
+import org.cloudsimplus.listeners.EventInfo;
+import org.cloudsimplus.resources.PeSimple;
+import org.cloudsimplus.schedulers.cloudlet.CloudletSchedulerSpaceShared;
+import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
+import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
+import org.cloudsimplus.vms.Vm;
+
+public class [name/] {
+
+	private final CloudSimPlus simulation;
+	private final Datacenter datacenter;
+	private final DatacenterBroker broker;
+	private ArrayDeque<User> users;
+	private final int USER_TYPES = [UMLModel.eContents(uml::Activity) -> size()/];
+	private final ActivityNode['[]'/] userActivityGraphs = new ActivityNode['['/]USER_TYPES[']'/];
+	private static ArrayList<LinkedCloudlet> cloudletList;
+	private static ArrayList<NamedHost> hostRecap;
+
+	public static void main(String['[]'/] args) {
+		List<SimulationResult> simResults = new ArrayList<>(Utils.REPETITIONS);
+		for(int i = 0; i < Utils.REPETITIONS; i++) {
+			new [name/]();
+			simResults.add(new SimulationResult(cloudletList, hostRecap));
+		}
+		for(String interaction : simResults.get(0).interactionResults.stream().map(i -> i.interactionName).distinct().collect(Collectors.toList())) {
+			System.out.println("- " + interaction + " ->");
+			System.out.println("SCI: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgSCI)).getAverage());
+			System.out.println("Service Time: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgServiceTime)).getAverage());
+			System.out.println("Throughput: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().throughput)).getAverage());
+		}
+		System.out.println("------------------");
+		for(String device : hostRecap.stream().map(NamedHost::getName).distinct().collect(Collectors.toList())) {
+			System.out.println("- " + device + " ->");
+			System.out.println("SCI: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgSCI)).getAverage());
+			System.out.println("Service Time: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgServiceTime)).getAverage());
+			System.out.println("Throughput: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().throughput)).getAverage());
+			System.out.println("Utilization: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgUtilization)).getAverage());
+			System.out.println("Dropped Connections: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().droppedConnections)).getAverage());
+		}
+	}
+
+	private [name/]() {
+		simulation = new CloudSimPlus();
+
+		final ArrayList<NamedHost> hostList = new ArrayList<>([UMLModel.eContents(uml::Device) -> size()/]);
+		final ArrayList<Vm> vmList = new ArrayList<>([UMLModel.eContents(uml::Device) -> collectNested(eContents(uml::ExecutionEnvironment)) -> flatten() -> size()/]);
+		cloudletList = new ArrayList<>();
+		NamedHost host;
+
+		[for (device : uml::Device | UMLModel.eContents(uml::Device) -> select(dev | not dev.getAppliedStereotype('sciuml::EmittingDevice').oclIsUndefined()))]
+		[let ds : uml::Stereotype = device.getAppliedStereotype('sciuml::EmittingDevice')]
+		host = new NamedHost("[device.name.safe()/]", [device.getValue(ds, 'ram')/], [device.getValue(ds, 'bandwidth')/], [device.getValue(ds, 'storage')/], [for (n : Integer | Sequence{1..(device.getValue(ds, 'CoresPerCPU').oclAsType(Integer) * device.getValue(ds, 'CPUs').oclAsType(Integer))}) before('List.of(') separator(', ') after('),')]new PeSimple([device.getValue(ds, 'MIPS')/])[/for] [device.getValue(ds, 'embodiedEmissions').oclAsType(Real)/], [device.getValue(ds, 'expectedLifespan').oclAsType(Real)/], [device.getValue(ds, 'thermalDesignPowerPerCPU').oclAsType(Real) * device.getValue(ds, 'CPUs').oclAsType(Integer)/], "[device.getValue(ds, 'location').oclAsType(uml::EnumerationLiteral).name/]");
+		hostList.add(host);
+		[for (ee : uml::ExecutionEnvironment | device.eContents(uml::ExecutionEnvironment) -> select(env | not env.getAppliedStereotype('sciuml::VirtualMachine').oclIsUndefined()))]
+		[let es : uml::Stereotype = ee.getAppliedStereotype('sciuml::VirtualMachine')]
+		Vm [device.name.safe() + ee.name.safe()/] = new LinkedVm([ee.getValue(es, 'MIPS')/], [ee.getValue(es, 'reservedCores')/], host.getName()).setRam([ee.getValue(es, 'ram')/]).setBw([ee.getValue(es, 'bandwidth')/]).setSize([ee.getValue(es, 'capacity')/]).setDescription("[ee.name.safe()/]").setCloudletScheduler(new CloudletSchedulerSpaceShared());
+		vmList.add([device.name.safe() + ee.name.safe()/]);
+		[/let] [comment es /]
+		[/for] [comment ee /]
+		[/let] [comment ds /]
+		[/for] [comment device /]
+		
+		datacenter = new DatacenterSimple(simulation, hostList, new CustomAllocationPolicy(hostList));
+		datacenter.setName("[name/]");
+
+		broker = new DatacenterBrokerSimple(simulation);
+		broker.submitVmList(vmList);
+
+		Map<String, TriConsumer<EventInfo, String, BiConsumer<EventInfo, String>>> interactions = new HashMap<>();
+		interactions.put("Nop", (evt, user, next) -> {next.accept(evt, user);});
+		interactions.put("Sink", (evt, user, next) -> {});
+
+		[for (interaction: uml::Interaction | UMLModel.eContents(uml::Interaction)) separator('\n')]
+		interactions.put("[interaction.name.safe()/]", (evt, user, next) -> {
+			LinkedCloudlet cl;
+			ArrayList<LinkedCloudlet> newCloudlets = new ArrayList<>([interaction.eContents(uml::BehaviorExecutionSpecification) -> size()/]);
+			[let interactionEnd : Real = 
+				interaction.eContents(uml::TimeConstraint) 
+				-> collectNested(eContents(uml::TimeInterval)) 
+				-> flatten() 
+				-> collectNested(min) 
+				-> collect(e | e.oclAsType(uml::TimeExpression).expr)
+				-> collect(e | e.oclAsType(uml::LiteralReal).value)
+				-> sortedBy(e | e)
+				-> last()]
+			[for (bes: uml::BehaviorExecutionSpecification | interaction.eContents(uml::BehaviorExecutionSpecification)
+			 	-> select(b | not b.getAppliedStereotype('sciuml::Cloudlet').oclIsUndefined()))]
+			[let bs : uml::Stereotype = bes.getAppliedStereotype('sciuml::Cloudlet')]
+			[let start : Real = 
+				interaction.eContents(uml::TimeConstraint)
+				-> select(tc: uml::TimeConstraint | tc.constrainedElement -> first() = bes.start)
+				-> first()
+				.specification.oclAsType(uml::TimeInterval)
+				.min.oclAsType(uml::TimeExpression)
+				.expr.oclAsType(uml::LiteralReal).value]
+			[let end : Real = 
+				interaction.eContents(uml::TimeConstraint)
+				-> select(tc: uml::TimeConstraint | tc.constrainedElement -> first() = bes.finish)
+				-> first()
+				.specification.oclAsType(uml::TimeInterval)
+				.min.oclAsType(uml::TimeExpression)
+				.expr.oclAsType(uml::LiteralReal).value]
+			[let vm : uml::ExecutionEnvironment =
+				bes.covered 
+				-> any(true)
+				.represents.eContainer(uml::ExecutionEnvironment)]
+			[let device : uml::Device = vm.eContainer(uml::Device)]
+			[let ds : uml::Stereotype = device.getAppliedStereotype('sciuml::EmittingDevice')]
+			[let vs : uml::Stereotype = vm.getAppliedStereotype('sciuml::VirtualMachine')]
+			[comment [(bes.getValue(bs, 'utilizationRate').oclAsType(Real)*(end - start)*vm.getValue(vs, 'MIPS').oclAsType(Integer)).floor()/]
+			cl = new LinkedCloudlet([bes.getValue(bs, 'MI')/], [bes.getValue(bs, 'requiredCores')/], new UtilizationModelFull(), "[bes.name.safe()/]", [device.name.safe() + vm.name.safe()/], user, "[interaction.name.safe()/]");
+			cl.setSubmissionDelay([start/]);
+			cl.setSizes(1024);
+			cl.setUtilizationModelRam(new UtilizationModelDynamic(0.0001));
+			cl.setUtilizationModelBw(new UtilizationModelDynamic(0.0001));
+			[if(end = interactionEnd)]
+			if(next != null) {
+				cl.addOnFinishListener(evtt -> next.accept(evtt, user));
+			}
+			[/if]
+			newCloudlets.add(cl);
+			[/let] [comment vs /]
+			[/let] [comment ds /]
+			[/let] [comment device /]
+			[/let] [comment vm /]
+			[/let] [comment end /]
+			[/let] [comment start /]
+			[/let] [comment bs /]
+			[/for] [comment bes /]
+			[/let] [comment interactionEnd /]
+			broker.submitCloudletList(newCloudlets);
+			for(LinkedCloudlet cloudlet : newCloudlets) {
+				broker.bindCloudletToVm(cloudlet, cloudlet.getRelatedVm());
+			}
+			cloudletList.addAll(newCloudlets);
+		});
+		[/for] [comment interaction /]
+
+		int graphsIndex = 0;
+
+		[for(activity : uml::Activity | UMLModel.eContents(uml::Activity)) separator('\n')]
+		[for(node : uml::ActivityNode | activity.node)]
+		[let nodeName : String = activity.name.safe() + node.name.safe()]
+		ActivityNode [nodeName/] = new ActivityNode(interactions.get("[if(node.oclIsTypeOf(uml::CallBehaviorAction))][node.oclAsType(uml::CallBehaviorAction).behavior.name.safe()/][else][if(node.oclIsTypeOf(uml::ActivityFinalNode))]Sink[else]Nop[/if][/if]"));
+		[if(node.oclIsTypeOf(uml::InitialNode))]
+		userActivityGraphs['['/]graphsIndex++[']'/] = [nodeName/];
+		[/if]
+		[/let] [comment nodeName /]
+		[/for] [comment node /]
+		[for(arrow : uml::ControlFlow | activity.edge -> selectByType(uml::ControlFlow))]
+		[activity.name.safe() + arrow.source.name.safe()/].addChild([activity.name.safe() + arrow.target.name.safe()/][if(not arrow.getAppliedStereotype('sciuml::OptionalFlow').oclIsUndefined())], [arrow.getValue(arrow.getAppliedStereotype('sciuml::OptionalFlow'), 'weight')/][/if]);
+		[/for] [comment arrow /]
+		[/for] [comment activity /]
+
+		double tt = 0.0;
+		int userId = 0;
+		users = new ArrayDeque<User>();
+		while(tt < Utils.EXEC_TIME) {
+			User u = new User("User"+userId, tt);
+			if(tt == 0.0) {
+				this.randomUserType().process(u.getName());
+			} else {
+				users.add(u);
+			}
+			double iat = -Math.log(1 - Utils.rng.nextDouble()) / Utils.EXP_LAMBDA;
+			tt += iat;
+			userId++;
+		}
+
+		simulation.addOnClockTickListener(this::checkArrivals);
+		simulation.terminateAt(Utils.EXEC_TIME);
+		simulation.start();
+
+		//new CustomTableBuilder(cloudletList, broker.getShutdownTime()).build();
+		//final List<Vm> vmRecap = broker.getVmCreatedList();
+		//new VmTableBuilder(vmRecap).build();
+		hostRecap = hostList;
+	}
+
+	public void checkArrivals(EventInfo evt) {
+		if(!users.isEmpty() && users.peek().getStartTime() <= evt.getTime()) {
+			User user = users.pop();
+			this.randomUserType().process(user.getName(), evt);
+		}
+	}
+
+	private ActivityNode randomUserType() {
+		return this.userActivityGraphs['['/]Utils.rng.nextInt(USER_TYPES)[']'/];
+	}
+}
+[/file]
+[/let] [comment name /]
+[file('Utils.java', false, 'UTF-8')]
+package lnu.se.cloud.playground;
+
+import java.util.*;
+import java.util.function.BiConsumer;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+
+import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamReader;
+
+import org.cloudsimplus.allocationpolicies.VmAllocationPolicyAbstract;
+import org.cloudsimplus.builders.tables.MarkdownTable;
+import org.cloudsimplus.builders.tables.TableBuilderAbstract;
+import org.cloudsimplus.cloudlets.Cloudlet;
+import org.cloudsimplus.cloudlets.CloudletSimple;
+import org.cloudsimplus.hosts.Host;
+import org.cloudsimplus.hosts.HostSimple;
+import org.cloudsimplus.listeners.EventInfo;
+import org.cloudsimplus.resources.Pe;
+import org.cloudsimplus.utilizationmodels.UtilizationModel;
+import org.cloudsimplus.vms.Vm;
+import org.cloudsimplus.vms.VmSimple;
+
+class NamedHost extends HostSimple {
+	private String name;
+	private static final double['[]'/] UTIL_POINTS = {0, 0.10, 0.50, 1};
+	private static final double['[]'/] TEADS_CURVE = {0.12, 0.32, 0.75, 1.02};
+	private static final int DEFAULT_GRID_CARBON_INTENSITY = 300;
+	private int gridCarbonIntensity;
+	private static final double NETWORK_ENERGY = 0.0; // Usually small, simplified to 0 at the moment
+	private double embodiedEmissions;
+	private double expectedLifespan;
+	private double thermalDesignPower;
+	
+	
+	public NamedHost(String name, long ram, long bw, long storage, List<Pe> peList, double embodiedEmissions, double expectedLifespan, double thermalDesignPower, String location) {
+		super(ram, bw, storage, peList);
+		this.name = name;
+		this.embodiedEmissions = embodiedEmissions;
+		this.expectedLifespan = expectedLifespan;
+		this.thermalDesignPower = thermalDesignPower;
+		this.gridCarbonIntensity = Utils.gcis.get(location) != null ? Utils.gcis.get(location) : DEFAULT_GRID_CARBON_INTENSITY;
+		this.enableUtilizationStats();
+	}
+	
+	public double getSci() {
+		double timeInterval = this.getTotalExecutionTime();
+		double usedPower = this.thermalDesignPower * calculateTeads(this.myUtil());
+		double resourceShare = (double) this.getVmCreatedList().stream().mapToLong(obj -> obj.getPesNumber()).sum() / this.getPesNumber();
+		double deviceEnergy = (timeInterval * usedPower) / 3600000; // This already considers the resource share
+		double energy = deviceEnergy + NETWORK_ENERGY;
+		double carbonOperational = this.gridCarbonIntensity * energy;
+		double embodiedCarbon = this.embodiedEmissions * (timeInterval / this.expectedLifespan) * resourceShare;
+		return carbonOperational + embodiedCarbon;
+	}
+
+	public Double myUtil() {
+		return this.getVmCreatedList().stream().mapToDouble(obj -> obj.getPesNumber() * obj.getCpuUtilizationStats().getMean()).sum() / this.getPesNumber();
+	}
+
+	public String getName() {
+		return name;
+	}
+
+	public double getEmbodiedEmissions() {
+		return embodiedEmissions;
+	}
+	
+	public double getExpectedLifespan() {
+		return expectedLifespan;
+	}
+	
+	public double getThermalDesignPower() {
+		return thermalDesignPower;
+	}
+	
+	public int getGridCarbonIntensity() {
+		return gridCarbonIntensity;
+	}
+
+	public double getNetworkEnergy() {
+		return NETWORK_ENERGY;
+	}
+	
+	protected static double calculateTeads(double utilization) {
+		for (int i = 0; i < UTIL_POINTS.length - 1; i++) {
+            ['if (utilization >= UTIL_POINTS[i] && utilization <= UTIL_POINTS[i + 1]) {'/]
+                ['return TEADS_CURVE[i] + (utilization - UTIL_POINTS[i]) *'/]
+                        ['(TEADS_CURVE[i + 1] - TEADS_CURVE[i]) /'/]
+                        ['(UTIL_POINTS[i + 1] - UTIL_POINTS[i]);'/]
+            }
+        }
+        ['return utilization == 0 ? TEADS_CURVE[0] : TEADS_CURVE[TEADS_CURVE.length - 1];'/]
+	}
+}
+
+class LinkedVm extends VmSimple {
+	private String hostName;
+	
+	public LinkedVm(double mipsCapacity, long pesNumber, String hostName) {
+		super(mipsCapacity, pesNumber);
+		this.hostName = hostName;
+		this.enableUtilizationStats();
+	}
+
+	public String getHostName() {
+		return hostName;
+	}
+}
+
+class LinkedCloudlet extends CloudletSimple {
+	private String name;
+	private Vm relatedVm;
+	private String username;
+	private String interaction;
+	
+	public LinkedCloudlet(long length, int pesNumber, UtilizationModel utilizationModel, String name, Vm relatedVm, String username, String interaction) {
+		super(length, pesNumber, utilizationModel);
+		this.name = name;
+		this.relatedVm = relatedVm;
+		this.username = username;
+		this.interaction = interaction;
+	}
+	
+	public Vm getRelatedVm() {
+		return relatedVm;
+	}
+	
+	public String getName() {
+		return name;
+	}
+	
+	public String getUsername() {
+		return username;
+	}
+
+	public String getInteraction() {
+		return interaction;
+	}
+
+	public double getSci() {
+		double timeInterval = this.getTotalExecutionTime();
+		if (!NamedHost.class.isInstance(this.getVm().getHost())) return 0.0;
+		NamedHost currentHost = (NamedHost) this.getVm().getHost();
+		double usedPower = currentHost.getThermalDesignPower() * NamedHost.calculateTeads(this.getUtilizationModelCpu().getUtilization());
+		double resourceShare = (double) this.getPesNumber() / currentHost.getPesNumber();
+		double deviceEnergy = resourceShare * ((timeInterval * usedPower) / 3600000); // This does not already consider the resource share
+		double energy = deviceEnergy + currentHost.getNetworkEnergy();
+		double carbonOperational = currentHost.getGridCarbonIntensity() * energy;
+		double embodiedCarbon = currentHost.getEmbodiedEmissions() * (timeInterval / currentHost.getExpectedLifespan()) * resourceShare;
+		return carbonOperational + embodiedCarbon;
+	}
+}
+
+class CustomAllocationPolicy extends VmAllocationPolicyAbstract {
+	private final List<NamedHost> allowedHosts;
+	private final boolean hostsAreNamed;
+	
+	public CustomAllocationPolicy(List<NamedHost> allowedHosts) {
+		this.allowedHosts = allowedHosts;
+		this.hostsAreNamed = allowedHosts.stream().allMatch(host -> NamedHost.class.isInstance(host));
+	}
+	
+	@Override
+	protected Optional<Host> defaultFindHostForVm(Vm vm) {
+		if(vm instanceof LinkedVm && hostsAreNamed) {
+			return Optional.of(allowedHosts.stream()
+					.filter(host -> host.isSuitableForVm(vm) && ((NamedHost) host).getName().equals(((LinkedVm) vm).getHostName()))
+					.findFirst()
+					.orElseThrow());
+		} else {
+			return Optional.of(allowedHosts.stream()
+					.filter(host -> host.isSuitableForVm(vm))
+					.findFirst()
+					.orElseThrow());
+		}
+	}
+}
+
+class CustomTableBuilder extends TableBuilderAbstract<LinkedCloudlet> {
+	
+	private final List<? extends LinkedCloudlet> list;
+	
+	public CustomTableBuilder(List<? extends LinkedCloudlet> list, double t) {
+		super(list, new MarkdownTable().setTitle("SIMULATION RESULTS (Run for " + String.format("%.2f" ,t) + " seconds)"));
+		list.sort(Comparator.comparingDouble(LinkedCloudlet::getStartTime));
+		this.list = list;
+	}
+	
+	@Override
+    protected void createTableColumns() {
+		newColumn("User", "Name", LinkedCloudlet::getUsername);
+		newColumn("Interaction", "Name", LinkedCloudlet::getInteraction);
+		newColumn("Cloudlet", "Name", LinkedCloudlet::getName);
+		newColumn("Status", "", obj -> obj.getStatus().name());
+		newColumn("Datacenter", "Name", obj -> obj.getVm().getHost().getDatacenter().getName());
+        newColumn("Host", "Name", cloudlet -> ((NamedHost) cloudlet.getVm().getHost()).getName());
+        newColumn("Host PEs", "CPU cores", cloudlet -> cloudlet.getVm().getHost().getWorkingPesNumber());
+        newColumn("VM", "Name", cloudlet -> cloudlet.getVm().getDescription());
+        newColumn("VM PEs", "CPU cores", cloudlet -> cloudlet.getVm().getPesNumber());
+        newColumn("CloudletLen", "MI", Cloudlet::getLength);
+        newColumn("FinishedLen", "MI", Cloudlet::getFinishedLengthSoFar);
+        newColumn("CloudletPEs", "CPU cores", Cloudlet::getPesNumber);
+        newColumn("StartTime", "Seconds", cloudlet -> String.format("%.1f", cloudlet.getStartTime()));
+        newColumn("FinishTime", "Seconds", cloudlet -> String.format("%.1f", cloudlet.getFinishTime()));
+        newColumn("ExecTime", "Seconds", cloudlet -> String.format("%.1f", cloudlet.getTotalExecutionTime()));
+		newColumn("SCI", "gCO2eq", cloudlet -> String.format("%.4f", cloudlet.getSci()));
+    }
+	
+	private void newColumn(String title, String subtitle, Function<LinkedCloudlet, Object> f) {
+		String fm = "%" + Math.max(this.list.stream().map(obj -> f.apply(obj).toString()).mapToInt(String::length).max().orElse(title.length()), Math.max(title.length(), subtitle.length())) + "s";
+		addColumn(getTable().newColumn(String.format(fm, title), subtitle, fm), f);
+	}
+}
+
+class VmTableBuilder extends TableBuilderAbstract<Vm> {
+	
+	private final List<? extends Vm> list;
+	
+	public VmTableBuilder(List<? extends Vm> list) {
+		super(list, new MarkdownTable().setTitle("Hosts and VMs Statistics"));
+		list.sort(Comparator.comparing(obj -> ((NamedHost) obj.getHost()).getName()));
+		this.list = list;
+	}
+	
+	@Override
+    protected void createTableColumns() {
+		newColumn("Host", "Name", obj -> ((NamedHost) obj.getHost()).getName());
+		newColumn("Host SCI", "gCO2eq", obj -> String.format("%.4f", ((NamedHost) obj.getHost()).getSci()));
+		newColumn("Host CPU Utilization", "Mean", obj -> String.format("%.2f%%", ((NamedHost) obj.getHost()).myUtil() * 100));
+		newColumn("VM", "Name", Vm::getDescription);
+		newColumn("VM CPU Utilization", "Mean", obj -> String.format("%.2f%%", obj.getCpuUtilizationStats().getMean() * 100));
+    }
+	
+	private void newColumn(String title, String subtitle, Function<Vm, Object> f) {
+		String fm = "%" + Math.max(this.list.stream().map(obj -> f.apply(obj).toString()).mapToInt(String::length).max().orElse(title.length()), Math.max(title.length(), subtitle.length())) + "s";
+		addColumn(getTable().newColumn(String.format(fm, title), subtitle, fm), f);
+	}
+}
+
+class User {
+	private String name;
+	private double startTime;
+	
+	public User(String name, double st) {
+		this.name = name;
+		this.startTime = st;
+	}
+	
+	public double getStartTime() {
+		return startTime;
+	}
+	
+	public String getName() {
+		return name;
+	}
+}
+
+@FunctionalInterface
+interface TriConsumer<T, U, V> {
+	void accept(T t, U u, V v);
+}
+
+class ActivityNode {
+	private TriConsumer<EventInfo, String, BiConsumer<EventInfo, String>> value;
+	private List<ActivityNode> children = new ArrayList<>();
+	private List<Integer> routingWeights = new ArrayList<>();
+	private static int DEFAULT_WEIGHT = 100;
+	
+	public ActivityNode(TriConsumer<EventInfo, String, BiConsumer<EventInfo, String>> value) {
+		this.value = value;
+	}
+	
+	public void addChild(ActivityNode t){
+		this.children.add(t);
+		this.routingWeights.add(DEFAULT_WEIGHT);
+	}
+	
+	public void addChild(ActivityNode t, int weight) {
+		this.children.add(t);
+		this.routingWeights.add(weight);
+	}
+	
+	private ActivityNode getNext() {
+		if(this.children.size() == 1) {
+			return this.children.get(0);
+		} else {
+			int totalWeight = this.routingWeights.stream().mapToInt(Integer::intValue).sum();
+			int extractedWeight = Utils.rng.nextInt(totalWeight + 1);
+			int runningSum = 0;
+			for(int j = 0; j < this.routingWeights.size(); j++) {
+				runningSum += this.routingWeights.get(j);
+				if(runningSum >= extractedWeight) return this.children.get(j);
+			}
+			return null;
+		}
+	}
+	
+	private BiConsumer<EventInfo, String> resolveValue() {
+		if(children.isEmpty()) {
+			return null;
+		} else {
+			ActivityNode next = getNext();
+			return (evt, str) -> next.value.accept(evt, str, next.resolveValue());
+		}
+	}
+	
+	public void process(String username) {
+		value.accept(null, username, resolveValue());
+	}
+	
+	public void process(String username, EventInfo evt) {
+		value.accept(evt, username, resolveValue());
+	}
+}
+
+class SimulationResult {
+	
+	class InteractionResult {
+		String interactionName;
+		double avgSCI;
+		double avgServiceTime;
+		long throughput;
+		
+		@Override
+		public String toString() {
+			return "i:" + interactionName + ",SCI:" + avgSCI + ",ServiceTime:" + avgServiceTime + ",tp:" + throughput;
+		}
+	}
+	
+	class DeviceResult {
+		String deviceName;
+		double avgSCI;
+		double avgServiceTime;
+		long throughput;
+		double avgUtilization;
+		long droppedConnections;
+		
+		@Override
+		public String toString() {
+			return "d:" + deviceName + ",SCI:" + avgSCI + ",ServiceTime:" + avgServiceTime + ",tp:" + throughput + ",u:" + avgUtilization + ",drop:" + droppedConnections;
+		}
+	}
+	
+	List<InteractionResult> interactionResults = new ArrayList<>();
+	List<DeviceResult> deviceResults = new ArrayList<>();
+	
+	public SimulationResult(List<LinkedCloudlet> cloudletList, List<NamedHost> hostRecap) {
+		List<LinkedCloudlet> finishedCloudlets = cloudletList.stream().filter(c -> c.getStatus().equals(Cloudlet.Status.SUCCESS)).collect(Collectors.toList());
+		for (NamedHost namedHost : hostRecap) {
+			DeviceResult dr = new DeviceResult();
+			dr.deviceName = namedHost.getName();
+			dr.avgUtilization = namedHost.myUtil();
+			dr.avgSCI = namedHost.getSci();
+			dr.throughput = finishedCloudlets.stream().filter(c -> c.getVm().getHost().equals(namedHost)).count();
+			dr.avgServiceTime = finishedCloudlets.stream().filter(c -> c.getVm().getHost().equals(namedHost)).mapToDouble(Cloudlet::getTotalExecutionTime).average().orElse(0.0);
+			dr.droppedConnections = cloudletList.stream().filter(c -> c.getStatus().equals(Cloudlet.Status.QUEUED) && c.getVm().getHost().equals(namedHost)).map(LinkedCloudlet::getUsername).distinct().count();
+			deviceResults.add(dr);
+		}
+		for (String interactionName : finishedCloudlets.stream().map(LinkedCloudlet::getInteraction).distinct().collect(Collectors.toList())) {
+			InteractionResult ir = new InteractionResult();
+			ir.interactionName = interactionName;
+			ir.avgSCI = finishedCloudlets.stream().filter(c -> c.getInteraction().equals(interactionName)).mapToDouble(LinkedCloudlet::getSci).average().orElse(0.0);
+			ir.avgServiceTime = finishedCloudlets.stream().filter(c -> c.getInteraction().equals(interactionName)).mapToDouble(Cloudlet::getTotalExecutionTime).average().orElse(0.0);
+			ir.throughput = finishedCloudlets.stream().filter(c -> c.getInteraction().equals(interactionName)).map(LinkedCloudlet::getUsername).distinct().count();
+			interactionResults.add(ir);
+		}
+	}
+}
+
+class Utils {
+	static Random rng = new Random();
+	static Map<String, Integer> gcis = new HashMap<>();
+	static final int EXEC_TIME = 3600;
+	static final double EXP_LAMBDA = 2;
+	static final int REPETITIONS = 20;
+	
+	static {
+		String currentRegion = null;
+		String currentElement = null;
+		
+		try {
+			XMLInputFactory factory = XMLInputFactory.newInstance();
+			XMLStreamReader reader = factory.createXMLStreamReader(Utils.class.getClassLoader().getResourceAsStream("gcis.xml"));
+			
+			while(reader.hasNext()) {
+				int event = reader.next();
+				
+				switch(event) {
+				case XMLStreamConstants.START_ELEMENT:
+					currentElement = reader.getLocalName();
+					if("region".equals(currentElement)) {
+						currentRegion = reader.getAttributeValue(null, "name");
+					}
+					break;
+					
+				case XMLStreamConstants.CHARACTERS:
+					String text = reader.getText().trim();
+					if (!text.isEmpty() && "carbon_intensity".equals(currentElement)) {
+						gcis.put(currentRegion.replaceAll("-", "_"), Integer.parseInt(text));
+					}
+					break;
+					
+				case XMLStreamConstants.END_ELEMENT:
+					currentElement = null;
+					break;
+				}
+			}
+			reader.close();
+		} catch (Exception e) {
+			e.printStackTrace();
+		}
+	}
+}
+[/file]
+[/template]
+
+[query public safe(s : String) : String = s.toUpperFirst().substituteAll(' ', '').substituteAll('-', '')/]
