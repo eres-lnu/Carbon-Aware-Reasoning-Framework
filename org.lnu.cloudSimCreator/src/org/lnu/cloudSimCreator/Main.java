@@ -11,9 +11,19 @@
 package org.lnu.cloudSimCreator;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Properties;
 
 import org.eclipse.acceleo.engine.event.IAcceleoTextGenerationListener;
 import org.eclipse.acceleo.engine.generation.strategy.IAcceleoGenerationStrategy;
@@ -22,7 +32,11 @@ import org.eclipse.emf.common.util.BasicMonitor;
 import org.eclipse.emf.common.util.Monitor;
 import org.eclipse.emf.common.util.URI;
 import org.eclipse.emf.ecore.EObject;
+import org.eclipse.emf.ecore.EPackage;
+import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.uml2.uml.Profile;
+import org.eclipse.uml2.uml.internal.resource.UMLResourceFactoryImpl;
 
 /**
  * Entry point of the 'Main' generation module.
@@ -115,15 +129,82 @@ public class Main extends AbstractAcceleoGenerator {
      * This can be used to launch the generation from a standalone application.
      * 
      * @param args
-     *            Arguments of the generation.
-     * @generated
+     *            Arguments of the generation. 
+     * @generated NOT
      */
-    public static void main(String[] args) {
+    public static void main(String[] args){
         try {
+        	/*
+        	 * Check that the parameter is a valid UML model and create its URI
+        	 */
+        	if (args.length < 1) throw new IllegalArgumentException("Please specify the path of the input model in the arguments");
+        	File model = new File(args[0]).getAbsoluteFile();
+        	URI modelURI = URI.createFileURI(model.getAbsolutePath());
+        	if (!model.exists() || !"uml".equals(modelURI.fileExtension())) throw new IllegalArgumentException("The input model should be an existing UML file");
+        	/*
+        	 * Use the UML file name to determine the package name of the CloudSimPlus source and the name of its main class
+        	 */
+        	String fileName = modelURI.trimFileExtension().lastSegment();
+        	StringBuilder sb = new StringBuilder();
+        	String[] fileNameParts = fileName.split("[^a-zA-Z0-9]+");
+        	for (String word : fileNameParts) {
+        		if (word.isEmpty()) continue;
+        		sb.append(Character.toUpperCase(word.charAt(0)));
+        		if (word.length() > 1) {
+        			sb.append(word.substring(1).toLowerCase());
+        		}
+        	}
+        	String projectName = sb.toString();
+        	String packageName = projectName.toLowerCase();
+        	/*
+        	 * Prepare the Maven project folder structure
+        	 */
+        	String projectRoot = ".." + File.separator + projectName;
+        	List<String> mavenDirectories = new ArrayList<>(Arrays.asList(
+        		"src" + File.separator + "main" + File.separator + "java",
+        		"src" + File.separator + "main" + File.separator + "resources",
+        		"src" + File.separator + "test" + File.separator + "java",
+        		"src" + File.separator + "test" + File.separator + "resources"
+        	));
+        	mavenDirectories.add(mavenDirectories.get(0) + File.separator + packageName);
+        	mavenDirectories.replaceAll(path -> projectRoot + File.separator + path);
+        	for (String dir : mavenDirectories) {
+                File folder = new File(dir);
+                if (!folder.mkdirs() && !folder.exists()) throw new IOException("Failed to create: " + folder.getPath());
+            }
+        	/*
+        	 * Write the needed resources (including pom.xml) in the Maven project
+        	 */
+        	writeResource("pom.xml", projectRoot);
+        	writeResource("gcis.dtd", mavenDirectories.get(1));
+        	writeResource("gcis.xml", mavenDirectories.get(1));
+        	/*
+        	 * Resolve Maven dependencies
+        	 */
+        	ProcessBuilder mavenResolver = new ProcessBuilder("/usr/local/bin/mvn", "dependency:resolve"); // Fix OS compatibility later
+        	mavenResolver.directory(new File(projectRoot).getAbsoluteFile());
+        	mavenResolver.inheritIO();
+        	Process mavenProcess = mavenResolver.start();
+        	if (mavenProcess.waitFor() != 0) throw new Exception("Something went wrong while resolving Maven dependencies");
+        	/*
+        	 * Launch the Acceleo transformation
+        	 */
+        	List<String> acceleoArguments = new ArrayList<String>();
+        	Main acceleoGenerator = new Main(modelURI, new File(mavenDirectories.get(4)), acceleoArguments);
+        	acceleoGenerator.doGenerate(new BasicMonitor());
+        	System.exit(0);
+        	
+        	Properties props = new Properties();
+        	FileInputStream fis = new FileInputStream("config.properties");
+        	props.load(fis);
+        	final String PROJECT_NAME = props.getProperty("project.name");
             if (args.length < 2) {
+            	System.out.println(System.getProperty("user.dir"));
+            	System.out.println(PROJECT_NAME);
+            	System.out.println(new File("../lnu.se.cloud.playground").exists());
                 System.out.println("Arguments not valid : {model, folder}.");
             } else {
-                URI modelURI = URI.createFileURI(args[0]);
+                
                 File folder = new File(args[1]);
                 
                 List<String> arguments = new ArrayList<String>();
@@ -159,9 +240,23 @@ public class Main extends AbstractAcceleoGenerator {
                 
                 generator.doGenerate(new BasicMonitor());
             }
-        } catch (IOException e) {
+        } catch (Exception e) {
             e.printStackTrace();
         }
+    }
+    
+    /**
+     * @generated NOT
+     * @param resourceName
+     * @param newPath
+     * @throws FileNotFoundException
+     * @throws IOException
+     */
+    protected static void writeResource(String resourceName, String newPath) throws FileNotFoundException, IOException {
+    	InputStream in = Thread.currentThread().getContextClassLoader().getResourceAsStream(resourceName);
+    	if (in == null) throw new FileNotFoundException("Something went wrong when retrieving the resource " + resourceName);
+    	Path resourcesPath = Paths.get(newPath + File.separator + resourceName);
+    	Files.copy(in, resourcesPath, StandardCopyOption.REPLACE_EXISTING);
     }
 
     /**
@@ -335,14 +430,25 @@ public class Main extends AbstractAcceleoGenerator {
      * 
      * @param resourceSet
      *            The resource set which registry has to be updated.
-     * @generated
+     * @generated NOT
      */
-    @Override
+    @SuppressWarnings("restriction")
+	@Override
     public void registerPackages(ResourceSet resourceSet) {
         super.registerPackages(resourceSet);
         if (!isInWorkspace(org.eclipse.uml2.uml.UMLPackage.class)) {
             resourceSet.getPackageRegistry().put(org.eclipse.uml2.uml.UMLPackage.eINSTANCE.getNsURI(), org.eclipse.uml2.uml.UMLPackage.eINSTANCE);
         }
+        URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
+    	if (profileURL == null) throw new IllegalArgumentException("Something went wrong while registering the SCIUML profile");
+    	URI profileURI = URI.createFileURI(Paths.get(profileURL.getPath()).toFile().getAbsolutePath());
+    	Resource.Factory.Registry.INSTANCE.getExtensionToFactoryMap().put("uml", new UMLResourceFactoryImpl());
+    	Resource profileResource = resourceSet.getResource(profileURI, true);
+    	Object profileRoot = profileResource.getContents().get(0);
+    	if (!(profileRoot instanceof Profile)) throw new IllegalArgumentException("The SCIUML profile is corrupted and cannot be registered");
+    	Profile profilePackage = (Profile) profileRoot;
+    	String nsURI = profilePackage.getURI();
+    	EPackage.Registry.INSTANCE.put(nsURI, profilePackage);
         
         /*
          * If you want to change the content of this method, do NOT forget to change the "@generated"
