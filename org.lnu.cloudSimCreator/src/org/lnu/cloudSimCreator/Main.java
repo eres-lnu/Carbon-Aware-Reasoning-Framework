@@ -11,7 +11,6 @@
 package org.lnu.cloudSimCreator;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
@@ -22,8 +21,10 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
-import java.util.Properties;
+import java.util.Map;
 
 import org.eclipse.acceleo.engine.event.IAcceleoTextGenerationListener;
 import org.eclipse.acceleo.engine.generation.strategy.IAcceleoGenerationStrategy;
@@ -31,12 +32,24 @@ import org.eclipse.acceleo.engine.service.AbstractAcceleoGenerator;
 import org.eclipse.emf.common.util.BasicMonitor;
 import org.eclipse.emf.common.util.Monitor;
 import org.eclipse.emf.common.util.URI;
+import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
+import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
+import org.eclipse.emf.ecore.util.EcoreUtil;
+import org.eclipse.emf.ecore.xmi.XMIResource;
+import org.eclipse.uml2.uml.resources.util.UMLResourcesUtil;
+import org.eclipse.uml2.uml.util.UMLUtil;
+import org.eclipse.uml2.uml.Element;
+import org.eclipse.uml2.uml.Model;
 import org.eclipse.uml2.uml.Profile;
+import org.eclipse.uml2.uml.ProfileApplication;
+import org.eclipse.uml2.uml.Stereotype;
+import org.eclipse.uml2.uml.UMLPackage;
 import org.eclipse.uml2.uml.internal.resource.UMLResourceFactoryImpl;
+import org.eclipse.uml2.uml.resource.UMLResource;
 
 /**
  * Entry point of the 'Main' generation module.
@@ -118,7 +131,7 @@ public class Main extends AbstractAcceleoGenerator {
      *            pass them here.
      * @throws IOException
      *             This can be thrown in two scenarios : the module cannot be found, or it cannot be loaded.
-     * @generated
+     * @generated NOT
      */
     public Main(EObject model, File targetFolder,
             List<? extends Object> arguments) throws IOException {
@@ -179,67 +192,53 @@ public class Main extends AbstractAcceleoGenerator {
         	writeResource("gcis.dtd", mavenDirectories.get(1));
         	writeResource("gcis.xml", mavenDirectories.get(1));
         	/*
-        	 * Resolve Maven dependencies
+        	 * Launch the Acceleo transformation, passing the package name as argument and registering the profile
         	 */
-        	ProcessBuilder mavenResolver = new ProcessBuilder("/usr/local/bin/mvn", "dependency:resolve"); // Fix OS compatibility later
+        	List<String> acceleoArguments = new ArrayList<String>();
+        	acceleoArguments.add(packageName);
+        	ResourceSet rs = new ResourceSetImpl();
+        	UMLResourcesUtil.init(rs);
+            URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
+        	URI profileURI = URI.createFileURI(Paths.get(profileURL.getPath()).toFile().getAbsolutePath());
+        	Resource umlModelResource = rs.getResource(modelURI, true);
+        	Resource profileResource = rs.getResource(profileURI, true);
+        	Model umlModel = (Model) EcoreUtil.getObjectByType(umlModelResource.getContents(), UMLPackage.Literals.MODEL);
+        	Profile profileRoot = (Profile) EcoreUtil.getObjectByType(profileResource.getContents(), UMLPackage.Literals.PACKAGE);
+        	System.out.println(profileResource.getContents().get(0));
+        	profileRoot.define();
+        	profileRoot.setURI("http://lnu.se/sciuml");
+        	String nsURI = profileRoot.getDefinition().getNsURI();
+        	EPackage.Registry.INSTANCE.put(nsURI, profileRoot.getDefinition());
+        	for (ProfileApplication pa : new ArrayList<>(umlModel.getProfileApplications())) {
+        	    umlModel.getProfileApplications().remove(pa);
+        	}
+        	rs.getURIConverter().getURIMap().put(profileURI, URI.createURI(nsURI));
+        	umlModel.applyProfile(profileRoot);
+        	EcoreUtil.resolveAll(rs);
+        	Map<String, Object> saveOptions = new HashMap<>();
+        	umlModelResource.save(saveOptions);
+        	for (Element e : umlModel.allOwnedElements()) {
+        		System.out.println("Found " + e.getAppliedStereotypes().size() + " stereotypes");
+        	}
+        	Main acceleoGenerator = new Main((EObject) umlModel, new File(mavenDirectories.get(4)), acceleoArguments);
+        	acceleoGenerator.doGenerate(new BasicMonitor());
+        	/*
+        	 * Compile and resolve dependencies through Maven
+        	 */
+        	ProcessBuilder mavenResolver = new ProcessBuilder("/usr/local/bin/mvn", "clean", "install"); // Fix OS compatibility later
         	mavenResolver.directory(new File(projectRoot).getAbsoluteFile());
         	mavenResolver.inheritIO();
         	Process mavenProcess = mavenResolver.start();
-        	if (mavenProcess.waitFor() != 0) throw new Exception("Something went wrong while resolving Maven dependencies");
+        	if (mavenProcess.waitFor() != 0) throw new Exception("Something went wrong while resolving Maven dependencies and compiling the simulation");
         	/*
-        	 * Launch the Acceleo transformation
+        	 * Start the simulation through Maven
         	 */
-        	List<String> acceleoArguments = new ArrayList<String>();
-        	Main acceleoGenerator = new Main(modelURI, new File(mavenDirectories.get(4)), acceleoArguments);
-        	acceleoGenerator.doGenerate(new BasicMonitor());
-        	System.exit(0);
-        	
-        	Properties props = new Properties();
-        	FileInputStream fis = new FileInputStream("config.properties");
-        	props.load(fis);
-        	final String PROJECT_NAME = props.getProperty("project.name");
-            if (args.length < 2) {
-            	System.out.println(System.getProperty("user.dir"));
-            	System.out.println(PROJECT_NAME);
-            	System.out.println(new File("../lnu.se.cloud.playground").exists());
-                System.out.println("Arguments not valid : {model, folder}.");
-            } else {
-                
-                File folder = new File(args[1]);
-                
-                List<String> arguments = new ArrayList<String>();
-                
-                /*
-                 * If you want to change the content of this method, do NOT forget to change the "@generated"
-                 * tag in the Javadoc of this method to "@generated NOT". Without this new tag, any compilation
-                 * of the Acceleo module with the main template that has caused the creation of this class will
-                 * revert your modifications.
-                 */
-
-                /*
-                 * Add in this list all the arguments used by the starting point of the generation
-                 * If your main template is called on an element of your model and a String, you can
-                 * add in "arguments" this "String" attribute.
-                 */
-                
-                Main generator = new Main(modelURI, folder, arguments);
-                
-                /*
-                 * Add the properties from the launch arguments.
-                 * If you want to programmatically add new properties, add them in "propertiesFiles"
-                 * You can add the absolute path of a properties files, or even a project relative path.
-                 * If you want to add another "protocol" for your properties files, please override 
-                 * "getPropertiesLoaderService(AcceleoService)" in order to return a new property loader.
-                 * The behavior of the properties loader service is explained in the Acceleo documentation
-                 * (Help -> Help Contents).
-                 */
-                 
-                for (int i = 2; i < args.length; i++) {
-                    generator.addPropertiesFile(args[i]);
-                }
-                
-                generator.doGenerate(new BasicMonitor());
-            }
+        	ProcessBuilder mavenRunner = new ProcessBuilder("/usr/local/bin/mvn", "exec:java", "-Dexec.mainClass=" + packageName + "." +
+        			packageName.replaceFirst(String.valueOf(packageName.charAt(0)), String.valueOf(packageName.charAt(0)).toUpperCase()));
+        	mavenRunner.directory(new File(projectRoot).getAbsoluteFile());
+        	mavenRunner.inheritIO();
+        	Process simulationProcess = mavenRunner.start();
+        	if (simulationProcess.waitFor() != 0) throw new Exception("The simulation execution failed");
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -432,24 +431,23 @@ public class Main extends AbstractAcceleoGenerator {
      *            The resource set which registry has to be updated.
      * @generated NOT
      */
-    @SuppressWarnings("restriction")
 	@Override
     public void registerPackages(ResourceSet resourceSet) {
         super.registerPackages(resourceSet);
         if (!isInWorkspace(org.eclipse.uml2.uml.UMLPackage.class)) {
             resourceSet.getPackageRegistry().put(org.eclipse.uml2.uml.UMLPackage.eINSTANCE.getNsURI(), org.eclipse.uml2.uml.UMLPackage.eINSTANCE);
         }
-        URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
+        
+        /*URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
     	if (profileURL == null) throw new IllegalArgumentException("Something went wrong while registering the SCIUML profile");
     	URI profileURI = URI.createFileURI(Paths.get(profileURL.getPath()).toFile().getAbsolutePath());
-    	Resource.Factory.Registry.INSTANCE.getExtensionToFactoryMap().put("uml", new UMLResourceFactoryImpl());
+    	UMLResourcesUtil.init(resourceSet);
     	Resource profileResource = resourceSet.getResource(profileURI, true);
     	Object profileRoot = profileResource.getContents().get(0);
     	if (!(profileRoot instanceof Profile)) throw new IllegalArgumentException("The SCIUML profile is corrupted and cannot be registered");
     	Profile profilePackage = (Profile) profileRoot;
     	String nsURI = profilePackage.getURI();
-    	EPackage.Registry.INSTANCE.put(nsURI, profilePackage);
-        
+    	EPackage.Registry.INSTANCE.put(nsURI, profilePackage);*/
         /*
          * If you want to change the content of this method, do NOT forget to change the "@generated"
          * tag in the Javadoc of this method to "@generated NOT". Without this new tag, any compilation

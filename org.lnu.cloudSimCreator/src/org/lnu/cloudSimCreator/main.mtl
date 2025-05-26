@@ -2,11 +2,11 @@
 [module main('http://www.eclipse.org/uml2/5.0.0/UML')]
 
 
-[template public projectGenerator(UMLModel : uml::Model)]'
+[template public projectGenerator(UMLModel : uml::Model, packageName : String)]'
 [comment @main/]
 [let name : String = UMLModel.name.safe()]
 [file(name + '.java', false, 'UTF-8')]
-package lnu.se.cloud.playground;
+package [packageName/];
 
 import java.util.*;
 import java.util.function.BiConsumer;
@@ -41,6 +41,7 @@ public class [name/] {
 			new [name/]();
 			simResults.add(new SimulationResult(cloudletList, hostRecap));
 		}
+
 		for(String interaction : simResults.get(0).interactionResults.stream().map(i -> i.interactionName).distinct().collect(Collectors.toList())) {
 			System.out.println("- " + interaction + " ->");
 			System.out.println("SCI: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgSCI)).getAverage());
@@ -190,9 +191,9 @@ public class [name/] {
 		simulation.terminateAt(Utils.EXEC_TIME);
 		simulation.start();
 
-		//new CustomTableBuilder(cloudletList, broker.getShutdownTime()).build();
-		//final List<Vm> vmRecap = broker.getVmCreatedList();
-		//new VmTableBuilder(vmRecap).build();
+		new CustomTableBuilder(cloudletList, broker.getShutdownTime()).build();
+		final List<Vm> vmRecap = broker.getVmCreatedList();
+		new VmTableBuilder(vmRecap).build();
 		hostRecap = hostList;
 	}
 
@@ -210,7 +211,7 @@ public class [name/] {
 [/file]
 [/let] [comment name /]
 [file('Utils.java', false, 'UTF-8')]
-package lnu.se.cloud.playground;
+package [packageName/];
 
 import java.util.*;
 import java.util.function.BiConsumer;
