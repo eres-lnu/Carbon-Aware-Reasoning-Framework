@@ -12,3 +12,6 @@ Running instructions:
 - Set org.lnu.cloudSimCreator as "Project" and org.lnu.cloudSimCreator.Main as "Main class", then add the path of your desired UML model under the "Arguments" tab in the "Program arguments" field
 - Press "Run" to execute the Reasoning Framework's Interpretation, the Simulation should execute immediately after
 - If the executable fails at invoking Maven, launch the commands "mvn clean install" and "mvn exec:java -Dexec.mainClass=YOURGENERATEDCLASSPACKAGENAME.YOURGENERATEDCLASSNAME" to launch the Simulation from a Terminal / Shell
+
+
+NOTE: The lnu.se.cloud.playground folder contains the generated interpretations for the three provided deployment strategies, whose UML models can be found under deploymentStrategies. The definition of the SCIUML profile is available under the sci-uml folder.
