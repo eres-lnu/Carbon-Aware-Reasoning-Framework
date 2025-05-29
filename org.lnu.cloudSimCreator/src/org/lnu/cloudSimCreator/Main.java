@@ -14,42 +14,39 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.Collections;
-import java.util.HashMap;
+import java.util.Comparator;
 import java.util.List;
-import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+
+import org.apache.maven.shared.invoker.*;
 
 import org.eclipse.acceleo.engine.event.IAcceleoTextGenerationListener;
 import org.eclipse.acceleo.engine.generation.strategy.IAcceleoGenerationStrategy;
 import org.eclipse.acceleo.engine.service.AbstractAcceleoGenerator;
+import org.eclipse.acceleo.model.mtl.MtlPackage;
 import org.eclipse.emf.common.util.BasicMonitor;
 import org.eclipse.emf.common.util.Monitor;
 import org.eclipse.emf.common.util.URI;
-import org.eclipse.emf.ecore.EAnnotation;
 import org.eclipse.emf.ecore.EObject;
 import org.eclipse.emf.ecore.EPackage;
 import org.eclipse.emf.ecore.resource.Resource;
 import org.eclipse.emf.ecore.resource.ResourceSet;
 import org.eclipse.emf.ecore.resource.impl.ResourceSetImpl;
 import org.eclipse.emf.ecore.util.EcoreUtil;
-import org.eclipse.emf.ecore.xmi.XMIResource;
+import org.eclipse.emf.ecore.xmi.impl.XMIResourceFactoryImpl;
+import org.eclipse.acceleo.model.mtl.Module;
 import org.eclipse.uml2.uml.resources.util.UMLResourcesUtil;
-import org.eclipse.uml2.uml.util.UMLUtil;
-import org.eclipse.uml2.uml.Element;
 import org.eclipse.uml2.uml.Model;
 import org.eclipse.uml2.uml.Profile;
 import org.eclipse.uml2.uml.ProfileApplication;
-import org.eclipse.uml2.uml.Stereotype;
 import org.eclipse.uml2.uml.UMLPackage;
-import org.eclipse.uml2.uml.internal.resource.UMLResourceFactoryImpl;
-import org.eclipse.uml2.uml.resource.UMLResource;
 
 /**
  * Entry point of the 'Main' generation module.
@@ -70,6 +67,11 @@ public class Main extends AbstractAcceleoGenerator {
      * @generated
      */
     public static final String[] TEMPLATE_NAMES = { "projectGenerator" };
+    
+    /**
+     * @generated NOT
+     */
+    public static String PROJECT_ROOT;
     
     /**
      * The list of properties files from the launch parameters (Launch configuration).
@@ -172,7 +174,11 @@ public class Main extends AbstractAcceleoGenerator {
         	/*
         	 * Prepare the Maven project folder structure
         	 */
-        	String projectRoot = ".." + File.separator + projectName;
+        	Path projectDirectory = Files.createTempDirectory(projectName);
+        	PROJECT_ROOT = projectDirectory.toAbsolutePath().toString();
+        	System.out.println(PROJECT_ROOT);
+        	//System.exit(0);
+        	// String projectRoot = ".." + File.separator + projectName;
         	List<String> mavenDirectories = new ArrayList<>(Arrays.asList(
         		"src" + File.separator + "main" + File.separator + "java",
         		"src" + File.separator + "main" + File.separator + "resources",
@@ -180,17 +186,21 @@ public class Main extends AbstractAcceleoGenerator {
         		"src" + File.separator + "test" + File.separator + "resources"
         	));
         	mavenDirectories.add(mavenDirectories.get(0) + File.separator + packageName);
-        	mavenDirectories.replaceAll(path -> projectRoot + File.separator + path);
+        	mavenDirectories.replaceAll(path -> PROJECT_ROOT + File.separator + path);
         	for (String dir : mavenDirectories) {
                 File folder = new File(dir);
                 if (!folder.mkdirs() && !folder.exists()) throw new IOException("Failed to create: " + folder.getPath());
             }
         	/*
-        	 * Write the needed resources (including pom.xml) in the Maven project
+        	 * Write the needed resources (including pom.xml) in the Maven project and setup Maven
         	 */
-        	writeResource("pom.xml", projectRoot);
+        	String MAVEN_ARCHIVE = "apache-maven-3.9.9-bin.zip";
+        	writeResource("pom.xml", PROJECT_ROOT);
         	writeResource("gcis.dtd", mavenDirectories.get(1));
         	writeResource("gcis.xml", mavenDirectories.get(1));
+        	Path mavenHome = unzip(MAVEN_ARCHIVE, PROJECT_ROOT);
+        	File mavenFile = new File(mavenHome.toAbsolutePath().toString() + File.separator + "bin" + File.separator + "mvn");
+        	if (!mavenFile.canExecute()) if (!mavenFile.setExecutable(true)) throw new RuntimeException("Cannot execute the bundled Maven");
         	/*
         	 * Launch the Acceleo transformation, passing the package name as argument and registering the profile
         	 */
@@ -198,13 +208,17 @@ public class Main extends AbstractAcceleoGenerator {
         	acceleoArguments.add(packageName);
         	ResourceSet rs = new ResourceSetImpl();
         	UMLResourcesUtil.init(rs);
-            URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
-        	URI profileURI = URI.createFileURI(Paths.get(profileURL.getPath()).toFile().getAbsolutePath());
+            /*URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
+        	URI profileURI = URI.createFileURI(Paths.get(profileURL.getPath()).toFile().getAbsolutePath());*/
+        	URI profileSampleURI = URI.createURI("internal:/sci-uml.profile.uml");
+        	Resource profileResource = rs.createResource(profileSampleURI);
+        	InputStream profileIn = Thread.currentThread().getContextClassLoader().getResourceAsStream("sci-uml.profile.uml");
+        	if (profileIn == null) throw new IOException("Something went wrong when loading the profile");
+        	profileResource.load(profileIn, null);
         	Resource umlModelResource = rs.getResource(modelURI, true);
-        	Resource profileResource = rs.getResource(profileURI, true);
+        	//Resource profileResource = rs.getResource(profileURI, true);
         	Model umlModel = (Model) EcoreUtil.getObjectByType(umlModelResource.getContents(), UMLPackage.Literals.MODEL);
         	Profile profileRoot = (Profile) EcoreUtil.getObjectByType(profileResource.getContents(), UMLPackage.Literals.PACKAGE);
-        	System.out.println(profileResource.getContents().get(0));
         	profileRoot.define();
         	profileRoot.setURI("http://lnu.se/sciuml");
         	String nsURI = profileRoot.getDefinition().getNsURI();
@@ -212,33 +226,42 @@ public class Main extends AbstractAcceleoGenerator {
         	for (ProfileApplication pa : new ArrayList<>(umlModel.getProfileApplications())) {
         	    umlModel.getProfileApplications().remove(pa);
         	}
-        	rs.getURIConverter().getURIMap().put(profileURI, URI.createURI(nsURI));
+        	rs.getURIConverter().getURIMap().put(profileSampleURI, URI.createURI(nsURI));
         	umlModel.applyProfile(profileRoot);
         	EcoreUtil.resolveAll(rs);
-        	Map<String, Object> saveOptions = new HashMap<>();
-        	umlModelResource.save(saveOptions);
-        	for (Element e : umlModel.allOwnedElements()) {
-        		System.out.println("Found " + e.getAppliedStereotypes().size() + " stereotypes");
-        	}
+        	//Map<String, Object> saveOptions = new HashMap<>();
+        	//umlModelResource.save(saveOptions);
+        	System.out.println("The model has " + umlModel.allOwnedElements().stream().mapToInt(e -> e.getAppliedStereotypes().size()).sum() + " stereotype(s) applied.");
+        	
+        	// Register and load the .emtl for correct generation from JAR
+        	MtlPackage.eINSTANCE.eClass();
+        	Resource.Factory.Registry.INSTANCE.getExtensionToFactoryMap().put("emtl", new XMIResourceFactoryImpl());
+        	URI emtlSampleURI = URI.createURI("internal:/main.emtl");
+        	Resource emtlResource = rs.createResource(emtlSampleURI);
+        	InputStream emtlIn = Thread.currentThread().getContextClassLoader().getResourceAsStream("main.emtl");
+        	if (emtlIn == null) throw new IOException("The transformation template cannot be loaded");
+        	emtlResource.load(emtlIn, null);
+        	
         	Main acceleoGenerator = new Main((EObject) umlModel, new File(mavenDirectories.get(4)), acceleoArguments);
         	acceleoGenerator.doGenerate(new BasicMonitor());
         	/*
-        	 * Compile and resolve dependencies through Maven
+        	 * Execute the simulation through Maven
         	 */
-        	ProcessBuilder mavenResolver = new ProcessBuilder("/usr/local/bin/mvn", "clean", "install"); // Fix OS compatibility later
-        	mavenResolver.directory(new File(projectRoot).getAbsoluteFile());
-        	mavenResolver.inheritIO();
-        	Process mavenProcess = mavenResolver.start();
-        	if (mavenProcess.waitFor() != 0) throw new Exception("Something went wrong while resolving Maven dependencies and compiling the simulation");
+        	InvocationRequest request = new DefaultInvocationRequest();
+        	request.setMavenHome(mavenHome.toFile());
+        	request.setPomFile(new File(PROJECT_ROOT + File.separator + "pom.xml"));
+        	request.setGoals(Arrays.asList("clean", "install", "exec:java"));
+        	request.setMavenOpts("-Dmaven.repo.local=" + mavenHome.toAbsolutePath().toString() + File.separator + ".m2"
+        			+ " -Dexec.mainClass=" + packageName + "." + packageName.replaceFirst(String.valueOf(packageName.charAt(0)), String.valueOf(packageName.charAt(0)).toUpperCase()));
+        	request.setBatchMode(true);
+        	request.setOutputHandler(System.out::println);
+        	request.setErrorHandler(System.err::println);
+        	Invoker invoker = new DefaultInvoker();
+        	invoker.execute(request);
         	/*
-        	 * Start the simulation through Maven
+        	 * Clean up
         	 */
-        	ProcessBuilder mavenRunner = new ProcessBuilder("/usr/local/bin/mvn", "exec:java", "-Dexec.mainClass=" + packageName + "." +
-        			packageName.replaceFirst(String.valueOf(packageName.charAt(0)), String.valueOf(packageName.charAt(0)).toUpperCase()));
-        	mavenRunner.directory(new File(projectRoot).getAbsoluteFile());
-        	mavenRunner.inheritIO();
-        	Process simulationProcess = mavenRunner.start();
-        	if (simulationProcess.waitFor() != 0) throw new Exception("The simulation execution failed");
+        	Files.walk(projectDirectory).sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -256,6 +279,39 @@ public class Main extends AbstractAcceleoGenerator {
     	if (in == null) throw new FileNotFoundException("Something went wrong when retrieving the resource " + resourceName);
     	Path resourcesPath = Paths.get(newPath + File.separator + resourceName);
     	Files.copy(in, resourcesPath, StandardCopyOption.REPLACE_EXISTING);
+    }
+    
+    /**
+     * @generated NOT
+     * @param zipFilePath
+     * @param destDir
+     * @throws IOException
+     */
+    public static Path unzip(String resourceName, String destDir) throws IOException {
+        try (InputStream fis = Thread.currentThread().getContextClassLoader().getResourceAsStream(resourceName);
+             ZipInputStream zis = new ZipInputStream(fis)) {
+
+            ZipEntry entry;
+            Path mvnHomePath = null;
+            Path destDirPath = Paths.get(destDir);
+            while ((entry = zis.getNextEntry()) != null) {
+                Path newFilePath = destDirPath.resolve(entry.getName()).normalize();
+                if (mvnHomePath == null) mvnHomePath = newFilePath;
+
+                if (!newFilePath.startsWith(destDir)) {
+                    throw new IOException("Bad zip entry: " + entry.getName());
+                }
+
+                if (entry.isDirectory()) {
+                    Files.createDirectories(newFilePath);
+                } else {
+                    Files.createDirectories(newFilePath.getParent());
+                    Files.copy(zis, newFilePath, StandardCopyOption.REPLACE_EXISTING);
+                }
+                zis.closeEntry();
+            }
+            return mvnHomePath;
+        }
     }
 
     /**
@@ -345,11 +401,43 @@ public class Main extends AbstractAcceleoGenerator {
      * We expect this name not to contain file extension, and the module to be located beside the launcher.
      * 
      * @return The name of the module that is to be launched.
-     * @generated
+     * @generated NOT
      */
     @Override
     public String getModuleName() {
-        return MODULE_FILE_NAME;
+        return !isRunningFromJar() ? MODULE_FILE_NAME : "/src" + MODULE_FILE_NAME;
+    }
+    
+    /**
+     * @generated NOT
+     * @return
+     */
+    protected static boolean isRunningFromJar() {
+        String className = Main.class.getSimpleName() + ".class";
+        String classPath = Main.class.getResource(className).toString();
+        return classPath.startsWith("rsrc:");
+    }
+
+    /**
+     * This will use the standard initializer when launched from inside Eclipse and fall back to manual loading when launched from JAR
+     * @generated NOT
+     */
+    @Override
+    public void initialize(EObject model, File targetFolder, List<? extends Object> arguments) throws IOException{
+    	try {
+    		super.initialize(model, targetFolder, arguments);
+    	} catch (Exception e) {
+    		writeResource("main.emtl", PROJECT_ROOT);
+    		URI moduleURI = URI.createFileURI(PROJECT_ROOT + File.separator + "main.emtl");
+        	ResourceSet rs = new ResourceSetImpl();
+        	Resource emtlResource = rs.getResource(moduleURI, true);
+        	Module module = (Module) emtlResource.getContents().get(0);
+        	
+        	this.module = module;
+        	this.targetFolder = targetFolder;
+        	this.model = model;
+        	this.generationArguments = arguments;
+    	}
     }
     
     /**

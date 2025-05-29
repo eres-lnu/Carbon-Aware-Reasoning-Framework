@@ -512,11 +512,11 @@
     <packagedElement xmi:type="uml:TimeExpression" xmi:id="_aoAS0AiwEfCT05M8K0-LSA">
       <expr xmi:type="uml:LiteralReal" xmi:id="_aoCIAAiwEfCT05M8K0-LSA" value="0.1"/>
     </packagedElement>
-    <profileApplication xmi:id="_VPWJ7joUEfCmBPX6PxxBpQ">
-      <eAnnotations xmi:id="_VPXXwDoUEfCmBPX6PxxBpQ" source="http://www.eclipse.org/uml2/2.0.0/UML">
-        <references xmi:type="ecore:EPackage" href="../../org.lnu.cloudSimCreator/bin/sci-uml.profile.uml#_VPWJoDoUEfCmBPX6PxxBpQ"/>
+    <profileApplication xmi:id="_9VabwDuiEfCtYOa4zpBNDQ">
+      <eAnnotations xmi:id="_9VdfEDuiEfCtYOa4zpBNDQ" source="http://www.eclipse.org/uml2/2.0.0/UML">
+        <references xmi:type="ecore:EPackage" href="internal:/sci-uml.profile.uml#_9VTHADuiEfCtYOa4zpBNDQ"/>
       </eAnnotations>
-      <appliedProfile href="../../org.lnu.cloudSimCreator/bin/sci-uml.profile.uml#_xRgtoN4vEe-PJ9LyM18TPA"/>
+      <appliedProfile href="internal:/sci-uml.profile.uml#_xRgtoN4vEe-PJ9LyM18TPA"/>
     </profileApplication>
   </uml:Model>
   <sciuml:EmittingDevice xmi:id="_vO_GAN_AEe-K3OIlImTuSw" embodiedEmissions="1350000.0" expectedLifespan="1.892E8" thermalDesignPowerPerCPU="205.0" base_Device="_iD4icNo1Ee-VmqHliz02fg" CoresPerCPU="16" MIPS="9000" storage="5000000" CPUs="1"/>
