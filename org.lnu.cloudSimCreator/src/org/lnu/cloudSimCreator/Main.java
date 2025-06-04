@@ -14,6 +14,7 @@ import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -47,6 +48,12 @@ import org.eclipse.uml2.uml.Model;
 import org.eclipse.uml2.uml.Profile;
 import org.eclipse.uml2.uml.ProfileApplication;
 import org.eclipse.uml2.uml.UMLPackage;
+
+import javax.swing.*;
+import javax.swing.filechooser.FileNameExtensionFilter;
+
+import java.awt.*;
+import java.io.*;
 
 /**
  * Entry point of the 'Main' generation module.
@@ -141,130 +148,237 @@ public class Main extends AbstractAcceleoGenerator {
     }
     
     /**
+     * @generated NOT
+     * @param args
+     */
+    public static void main(String[] args) {
+    	String BUTTON_LABEL = "Create and Run Simulation";
+        // Create main window
+        JFrame frame = new JFrame("SCARF");
+        frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
+        frame.setSize(600, 400);
+        frame.setLayout(new BorderLayout(10, 10));
+
+        // Text field for file path
+        JTextField filePathField = new JTextField();
+        filePathField.setEditable(false);
+
+        // Browse button
+        JButton browseButton = new JButton("Browse UML Architecture Description...");
+        browseButton.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            FileNameExtensionFilter filter = new FileNameExtensionFilter("UML models", "uml");
+            fileChooser.setAcceptAllFileFilterUsed(false);
+            fileChooser.setFileFilter(filter);
+            int result = fileChooser.showOpenDialog(frame);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selectedFile = fileChooser.getSelectedFile();
+                filePathField.setText(selectedFile.getAbsolutePath());
+                filePathField.setCaretPosition(0);
+                filePathField.setEnabled(false);
+            }
+        });
+
+        // Text area for console output
+        JTextArea consoleArea = new JTextArea();
+        consoleArea.setEditable(false);
+        JScrollPane scrollPane = new JScrollPane(consoleArea);
+
+        // Redirect System.out to consoleArea
+        PrintStream ps = new PrintStream(new OutputStream() {
+            @Override
+            public void write(int b) throws IOException {
+                consoleArea.append(String.valueOf((char) b));
+                consoleArea.setCaretPosition(consoleArea.getDocument().getLength());
+            }
+        });
+        System.setOut(ps);
+        System.setErr(ps);
+
+        // Run button
+        JButton runButton = new JButton(BUTTON_LABEL);
+        runButton.addActionListener(e -> {
+	        	String filePath = filePathField.getText();
+	        	if(filePath.isEmpty()) {
+	                JOptionPane.showMessageDialog(frame, "Please select a file first.", "Error", JOptionPane.ERROR_MESSAGE);
+	                return;
+	            }
+	        	runButton.setEnabled(false);
+	        	runButton.setText("Running the interpretation...");
+	        	runButton.repaint();
+	        	browseButton.setEnabled(false);
+	        	SwingUtilities.invokeLater(() -> {
+		        	new Thread(() -> {
+			            try {
+			            	System.out.println("Generating an interpretation of " + filePath);
+			                interpretation(filePath);
+			                JOptionPane.showMessageDialog(frame, "Simulation successfully completed", "Information", JOptionPane.INFORMATION_MESSAGE, fetchLogo(64));
+			            } catch (Exception ex) {
+			            	JOptionPane.showMessageDialog(frame, ex.getMessage(), "Exception caught", JOptionPane.ERROR_MESSAGE);
+			            }
+			            
+			            SwingUtilities.invokeLater(() -> {
+			        		runButton.setEnabled(true);
+			        		runButton.setText(BUTTON_LABEL);
+			        		browseButton.setEnabled(true);
+			        	});
+			        }).start();
+	        	});
+        });
+        	
+
+        // Top panel for file selection
+        JPanel topPanel = new JPanel(new BorderLayout(5, 5));
+        topPanel.add(filePathField, BorderLayout.CENTER);
+        topPanel.add(browseButton, BorderLayout.EAST);
+
+        // Bottom panel for RUN button
+        JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        bottomPanel.add(runButton);
+
+        // Layout setup
+        frame.add(topPanel, BorderLayout.NORTH);
+        frame.add(scrollPane, BorderLayout.CENTER);
+        frame.add(bottomPanel, BorderLayout.SOUTH);
+
+        frame.setLocationRelativeTo(null); // Center
+        frame.setVisible(true);
+    }
+    
+    /**
+     * @generated NOT
+     * @param size
+     * @return
+     */
+    public static ImageIcon fetchLogo(int size) {
+    	URL logoURL = Thread.currentThread().getContextClassLoader().getResource("SCARFLogo.png");
+    	ImageIcon logoAsFullIcon = new ImageIcon(logoURL);
+    	Image scaledLogo = logoAsFullIcon.getImage().getScaledInstance(size, size, Image.SCALE_SMOOTH);
+    	return new ImageIcon(scaledLogo);
+    }
+    
+    /**
      * This can be used to launch the generation from a standalone application.
      * 
      * @param args
      *            Arguments of the generation. 
+     * @throws IOException 
+     * @throws MavenInvocationException 
      * @generated NOT
      */
-    public static void main(String[] args){
-        try {
-        	/*
-        	 * Check that the parameter is a valid UML model and create its URI
-        	 */
-        	if (args.length < 1) throw new IllegalArgumentException("Please specify the path of the input model in the arguments");
-        	File model = new File(args[0]).getAbsoluteFile();
-        	URI modelURI = URI.createFileURI(model.getAbsolutePath());
-        	if (!model.exists() || !"uml".equals(modelURI.fileExtension())) throw new IllegalArgumentException("The input model should be an existing UML file");
-        	/*
-        	 * Use the UML file name to determine the package name of the CloudSimPlus source and the name of its main class
-        	 */
-        	String fileName = modelURI.trimFileExtension().lastSegment();
-        	StringBuilder sb = new StringBuilder();
-        	String[] fileNameParts = fileName.split("[^a-zA-Z0-9]+");
-        	for (String word : fileNameParts) {
-        		if (word.isEmpty()) continue;
-        		sb.append(Character.toUpperCase(word.charAt(0)));
-        		if (word.length() > 1) {
-        			sb.append(word.substring(1).toLowerCase());
-        		}
-        	}
-        	String projectName = sb.toString();
-        	String packageName = projectName.toLowerCase();
-        	/*
-        	 * Prepare the Maven project folder structure
-        	 */
-        	Path projectDirectory = Files.createTempDirectory(projectName);
-        	PROJECT_ROOT = projectDirectory.toAbsolutePath().toString();
-        	System.out.println(PROJECT_ROOT);
-        	//System.exit(0);
-        	// String projectRoot = ".." + File.separator + projectName;
-        	List<String> mavenDirectories = new ArrayList<>(Arrays.asList(
-        		"src" + File.separator + "main" + File.separator + "java",
-        		"src" + File.separator + "main" + File.separator + "resources",
-        		"src" + File.separator + "test" + File.separator + "java",
-        		"src" + File.separator + "test" + File.separator + "resources"
-        	));
-        	mavenDirectories.add(mavenDirectories.get(0) + File.separator + packageName);
-        	mavenDirectories.replaceAll(path -> PROJECT_ROOT + File.separator + path);
-        	for (String dir : mavenDirectories) {
-                File folder = new File(dir);
-                if (!folder.mkdirs() && !folder.exists()) throw new IOException("Failed to create: " + folder.getPath());
-            }
-        	/*
-        	 * Write the needed resources (including pom.xml) in the Maven project and setup Maven
-        	 */
-        	String MAVEN_ARCHIVE = "apache-maven-3.9.9-bin.zip";
-        	writeResource("pom.xml", PROJECT_ROOT);
-        	writeResource("gcis.dtd", mavenDirectories.get(1));
-        	writeResource("gcis.xml", mavenDirectories.get(1));
-        	Path mavenHome = unzip(MAVEN_ARCHIVE, PROJECT_ROOT);
-        	File mavenFile = new File(mavenHome.toAbsolutePath().toString() + File.separator + "bin" + File.separator + "mvn");
-        	if (!mavenFile.canExecute()) if (!mavenFile.setExecutable(true)) throw new RuntimeException("Cannot execute the bundled Maven");
-        	/*
-        	 * Launch the Acceleo transformation, passing the package name as argument and registering the profile
-        	 */
-        	List<String> acceleoArguments = new ArrayList<String>();
-        	acceleoArguments.add(packageName);
-        	ResourceSet rs = new ResourceSetImpl();
-        	UMLResourcesUtil.init(rs);
-            /*URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
-        	URI profileURI = URI.createFileURI(Paths.get(profileURL.getPath()).toFile().getAbsolutePath());*/
-        	URI profileSampleURI = URI.createURI("internal:/sci-uml.profile.uml");
-        	Resource profileResource = rs.createResource(profileSampleURI);
-        	InputStream profileIn = Thread.currentThread().getContextClassLoader().getResourceAsStream("sci-uml.profile.uml");
-        	if (profileIn == null) throw new IOException("Something went wrong when loading the profile");
-        	profileResource.load(profileIn, null);
-        	Resource umlModelResource = rs.getResource(modelURI, true);
-        	//Resource profileResource = rs.getResource(profileURI, true);
-        	Model umlModel = (Model) EcoreUtil.getObjectByType(umlModelResource.getContents(), UMLPackage.Literals.MODEL);
-        	Profile profileRoot = (Profile) EcoreUtil.getObjectByType(profileResource.getContents(), UMLPackage.Literals.PACKAGE);
-        	profileRoot.define();
-        	profileRoot.setURI("http://lnu.se/sciuml");
-        	String nsURI = profileRoot.getDefinition().getNsURI();
-        	EPackage.Registry.INSTANCE.put(nsURI, profileRoot.getDefinition());
-        	for (ProfileApplication pa : new ArrayList<>(umlModel.getProfileApplications())) {
-        	    umlModel.getProfileApplications().remove(pa);
-        	}
-        	rs.getURIConverter().getURIMap().put(profileSampleURI, URI.createURI(nsURI));
-        	umlModel.applyProfile(profileRoot);
-        	EcoreUtil.resolveAll(rs);
-        	//Map<String, Object> saveOptions = new HashMap<>();
-        	//umlModelResource.save(saveOptions);
-        	System.out.println("The model has " + umlModel.allOwnedElements().stream().mapToInt(e -> e.getAppliedStereotypes().size()).sum() + " stereotype(s) applied.");
-        	
-        	// Register and load the .emtl for correct generation from JAR
-        	MtlPackage.eINSTANCE.eClass();
-        	Resource.Factory.Registry.INSTANCE.getExtensionToFactoryMap().put("emtl", new XMIResourceFactoryImpl());
-        	URI emtlSampleURI = URI.createURI("internal:/main.emtl");
-        	Resource emtlResource = rs.createResource(emtlSampleURI);
-        	InputStream emtlIn = Thread.currentThread().getContextClassLoader().getResourceAsStream("main.emtl");
-        	if (emtlIn == null) throw new IOException("The transformation template cannot be loaded");
-        	emtlResource.load(emtlIn, null);
-        	
-        	Main acceleoGenerator = new Main((EObject) umlModel, new File(mavenDirectories.get(4)), acceleoArguments);
-        	acceleoGenerator.doGenerate(new BasicMonitor());
-        	/*
-        	 * Execute the simulation through Maven
-        	 */
-        	InvocationRequest request = new DefaultInvocationRequest();
-        	request.setMavenHome(mavenHome.toFile());
-        	request.setPomFile(new File(PROJECT_ROOT + File.separator + "pom.xml"));
-        	request.setGoals(Arrays.asList("clean", "install", "exec:java"));
-        	request.setMavenOpts("-Dmaven.repo.local=" + mavenHome.toAbsolutePath().toString() + File.separator + ".m2"
-        			+ " -Dexec.mainClass=" + packageName + "." + packageName.replaceFirst(String.valueOf(packageName.charAt(0)), String.valueOf(packageName.charAt(0)).toUpperCase()));
-        	request.setBatchMode(true);
-        	request.setOutputHandler(System.out::println);
-        	request.setErrorHandler(System.err::println);
-        	Invoker invoker = new DefaultInvoker();
-        	invoker.execute(request);
-        	/*
-        	 * Clean up
-        	 */
-        	Files.walk(projectDirectory).sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
-        } catch (Exception e) {
-            e.printStackTrace();
+    public static void interpretation(String modelPath) throws IOException, MavenInvocationException{
+    	/*
+    	 * Check that the parameter is a valid UML model and create its URI
+    	 */
+    	File model = new File(modelPath).getAbsoluteFile();
+    	URI modelURI = URI.createFileURI(model.getAbsolutePath());
+    	if (!model.exists() || !"uml".equals(modelURI.fileExtension())) throw new IllegalArgumentException("The input model should be an existing UML file");
+    	/*
+    	 * Use the UML file name to determine the package name of the CloudSimPlus source and the name of its main class
+    	 */
+    	String fileName = modelURI.trimFileExtension().lastSegment();
+    	StringBuilder sb = new StringBuilder();
+    	String[] fileNameParts = fileName.split("[^a-zA-Z0-9]+");
+    	for (String word : fileNameParts) {
+    		if (word.isEmpty()) continue;
+    		sb.append(Character.toUpperCase(word.charAt(0)));
+    		if (word.length() > 1) {
+    			sb.append(word.substring(1).toLowerCase());
+    		}
+    	}
+    	String projectName = sb.toString();
+    	String packageName = projectName.toLowerCase();
+    	/*
+    	 * Prepare the Maven project folder structure
+    	 */
+    	Path projectDirectory = Files.createTempDirectory(projectName);
+    	PROJECT_ROOT = projectDirectory.toAbsolutePath().toString();
+    	System.out.println(PROJECT_ROOT);
+    	//System.exit(0);
+    	// String projectRoot = ".." + File.separator + projectName;
+    	List<String> mavenDirectories = new ArrayList<>(Arrays.asList(
+    		"src" + File.separator + "main" + File.separator + "java",
+    		"src" + File.separator + "main" + File.separator + "resources",
+    		"src" + File.separator + "test" + File.separator + "java",
+    		"src" + File.separator + "test" + File.separator + "resources"
+    	));
+    	mavenDirectories.add(mavenDirectories.get(0) + File.separator + packageName);
+    	mavenDirectories.replaceAll(path -> PROJECT_ROOT + File.separator + path);
+    	for (String dir : mavenDirectories) {
+            File folder = new File(dir);
+            if (!folder.mkdirs() && !folder.exists()) throw new IOException("Failed to create: " + folder.getPath());
         }
+    	/*
+    	 * Write the needed resources (including pom.xml) in the Maven project and setup Maven
+    	 */
+    	String MAVEN_ARCHIVE = "apache-maven-3.9.9-bin.zip";
+    	writeResource("pom.xml", PROJECT_ROOT);
+    	writeResource("gcis.dtd", mavenDirectories.get(1));
+    	writeResource("gcis.xml", mavenDirectories.get(1));
+    	Path mavenHome = unzip(MAVEN_ARCHIVE, PROJECT_ROOT);
+    	File mavenFile = new File(mavenHome.toAbsolutePath().toString() + File.separator + "bin" + File.separator + "mvn");
+    	if (!mavenFile.canExecute()) if (!mavenFile.setExecutable(true)) throw new RuntimeException("Cannot execute the bundled Maven");
+    	/*
+    	 * Launch the Acceleo transformation, passing the package name as argument and registering the profile
+    	 */
+    	List<String> acceleoArguments = new ArrayList<String>();
+    	acceleoArguments.add(packageName);
+    	ResourceSet rs = new ResourceSetImpl();
+    	UMLResourcesUtil.init(rs);
+        /*URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
+    	URI profileURI = URI.createFileURI(Paths.get(profileURL.getPath()).toFile().getAbsolutePath());*/
+    	URI profileSampleURI = URI.createURI("internal:/sci-uml.profile.uml");
+    	Resource profileResource = rs.createResource(profileSampleURI);
+    	InputStream profileIn = Thread.currentThread().getContextClassLoader().getResourceAsStream("sci-uml.profile.uml");
+    	if (profileIn == null) throw new IOException("Something went wrong when loading the profile");
+    	profileResource.load(profileIn, null);
+    	Resource umlModelResource = rs.getResource(modelURI, true);
+    	//Resource profileResource = rs.getResource(profileURI, true);
+    	Model umlModel = (Model) EcoreUtil.getObjectByType(umlModelResource.getContents(), UMLPackage.Literals.MODEL);
+    	Profile profileRoot = (Profile) EcoreUtil.getObjectByType(profileResource.getContents(), UMLPackage.Literals.PACKAGE);
+    	profileRoot.define();
+    	profileRoot.setURI("http://lnu.se/sciuml");
+    	String nsURI = profileRoot.getDefinition().getNsURI();
+    	EPackage.Registry.INSTANCE.put(nsURI, profileRoot.getDefinition());
+    	for (ProfileApplication pa : new ArrayList<>(umlModel.getProfileApplications())) {
+    	    umlModel.getProfileApplications().remove(pa);
+    	}
+    	rs.getURIConverter().getURIMap().put(profileSampleURI, URI.createURI(nsURI));
+    	umlModel.applyProfile(profileRoot);
+    	EcoreUtil.resolveAll(rs);
+    	//Map<String, Object> saveOptions = new HashMap<>();
+    	//umlModelResource.save(saveOptions);
+    	System.out.println("The model has " + umlModel.allOwnedElements().stream().mapToInt(e -> e.getAppliedStereotypes().size()).sum() + " stereotype(s) applied.");
+    	
+    	// Register and load the .emtl for correct generation from JAR
+    	MtlPackage.eINSTANCE.eClass();
+    	Resource.Factory.Registry.INSTANCE.getExtensionToFactoryMap().put("emtl", new XMIResourceFactoryImpl());
+    	URI emtlSampleURI = URI.createURI("internal:/main.emtl");
+    	Resource emtlResource = rs.createResource(emtlSampleURI);
+    	InputStream emtlIn = Thread.currentThread().getContextClassLoader().getResourceAsStream("main.emtl");
+    	if (emtlIn == null) throw new IOException("The transformation template cannot be loaded");
+    	emtlResource.load(emtlIn, null);
+    	
+    	Main acceleoGenerator = new Main((EObject) umlModel, new File(mavenDirectories.get(4)), acceleoArguments);
+    	acceleoGenerator.doGenerate(new BasicMonitor());
+    	/*
+    	 * Execute the simulation through Maven
+    	 */
+    	InvocationRequest request = new DefaultInvocationRequest();
+    	request.setMavenHome(mavenHome.toFile());
+    	request.setPomFile(new File(PROJECT_ROOT + File.separator + "pom.xml"));
+    	request.setGoals(Arrays.asList("clean", "install", "exec:java"));
+    	request.setMavenOpts("-Dmaven.repo.local=" + mavenHome.toAbsolutePath().toString() + File.separator + ".m2"
+    			+ " -Dexec.mainClass=" + packageName + "." + packageName.replaceFirst(String.valueOf(packageName.charAt(0)), String.valueOf(packageName.charAt(0)).toUpperCase()));
+    	request.setBatchMode(true);
+    	request.setOutputHandler(System.out::println);
+    	request.setErrorHandler(System.err::println);
+    	Invoker invoker = new DefaultInvoker();
+    	invoker.execute(request);
+    	/*
+    	 * Clean up
+    	 */
+    	Files.walk(projectDirectory).sorted(Comparator.reverseOrder()).map(Path::toFile).forEach(File::delete);
     }
     
     /**

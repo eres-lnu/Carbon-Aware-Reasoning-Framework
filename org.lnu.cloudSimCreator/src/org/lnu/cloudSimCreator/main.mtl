@@ -20,6 +20,7 @@ import org.cloudsimplus.datacenters.DatacenterSimple;
 import org.cloudsimplus.listeners.EventInfo;
 import org.cloudsimplus.resources.PeSimple;
 import org.cloudsimplus.schedulers.cloudlet.CloudletSchedulerSpaceShared;
+import org.cloudsimplus.util.Log;
 import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
 import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
 import org.cloudsimplus.vms.Vm;
@@ -37,9 +38,11 @@ public class [name/] {
 
 	public static void main(String['[]'/] args) {
 		List<SimulationResult> simResults = new ArrayList<>(Utils.REPETITIONS);
+		Log.setLevel(ch.qos.logback.classic.Level.WARN);
 		for(int i = 0; i < Utils.REPETITIONS; i++) {
 			new [name/]();
 			simResults.add(new SimulationResult(cloudletList, hostRecap));
+			System.out.println("Finished Simulation Repetition #" + (i + 1));
 		}
 
 		for(String interaction : simResults.get(0).interactionResults.stream().map(i -> i.interactionName).distinct().collect(Collectors.toList())) {
@@ -191,9 +194,9 @@ public class [name/] {
 		simulation.terminateAt(Utils.EXEC_TIME);
 		simulation.start();
 
-		new CustomTableBuilder(cloudletList, broker.getShutdownTime()).build();
+		//new CustomTableBuilder(cloudletList, broker.getShutdownTime()).build();
 		final List<Vm> vmRecap = broker.getVmCreatedList();
-		new VmTableBuilder(vmRecap).build();
+		//new VmTableBuilder(vmRecap).build();
 		hostRecap = hostList;
 	}
 
