@@ -22,6 +22,8 @@ import org.cloudsimplus.utilizationmodels.UtilizationModel;
 import org.cloudsimplus.vms.Vm;
 import org.cloudsimplus.vms.VmSimple;
 
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 class NamedHost extends HostSimple {
 	private String name;
 	private static final double[] UTIL_POINTS = {0, 0.10, 0.50, 1};
@@ -369,12 +371,39 @@ class SimulationResult {
 	}
 }
 
+class ResultSummary {
+    public Map<String, InteractionMetrics> interactions = new LinkedHashMap<>();
+    public Map<String, ServerMetrics> servers = new LinkedHashMap<>();
+}
+
+class InteractionMetrics {
+    @JsonProperty("SCI")
+    public double sci;
+    @JsonProperty("Service Time")
+    public double serviceTime;
+    @JsonProperty("Throughput")
+    public double throughput;
+}
+
+class ServerMetrics {
+    @JsonProperty("SCI")
+    public double sci;
+    @JsonProperty("Service Time")
+    public double serviceTime;
+    @JsonProperty("Throughput")
+    public double throughput;
+    @JsonProperty("Utilization")
+    public double utilization;
+    @JsonProperty("Dropped Connections")
+    public double droppedConnections;
+}
+
 class Utils {
 	static Random rng = new Random();
 	static Map<String, Integer> gcis = new HashMap<>();
 	static final int EXEC_TIME = 3600;
 	static final double EXP_LAMBDA = 2;
-	static final int REPETITIONS = 20;
+	static final int REPETITIONS = 2;
 	
 	static {
 		String currentRegion = null;

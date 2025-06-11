@@ -2,12 +2,14 @@
 [module main('http://www.eclipse.org/uml2/5.0.0/UML')]
 
 
-[template public projectGenerator(UMLModel : uml::Model, packageName : String)]'
+[template public projectGenerator(UMLModel : uml::Model, packageName : String, repetitions : Integer)]'
 [comment @main/]
 [let name : String = UMLModel.name.safe()]
 [file(name + '.java', false, 'UTF-8')]
 package [packageName/];
 
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
@@ -24,6 +26,9 @@ import org.cloudsimplus.util.Log;
 import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
 import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
 import org.cloudsimplus.vms.Vm;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 
 public class [name/] {
 
@@ -45,20 +50,58 @@ public class [name/] {
 			System.out.println("Finished Simulation Repetition #" + (i + 1));
 		}
 
+		ObjectMapper mapper = new ObjectMapper();
+		mapper.enable(SerializationFeature.INDENT_OUTPUT);
+		ResultSummary result = new ResultSummary();
+		
 		for(String interaction : simResults.get(0).interactionResults.stream().map(i -> i.interactionName).distinct().collect(Collectors.toList())) {
-			System.out.println("- " + interaction + " ->");
-			System.out.println("SCI: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgSCI)).getAverage());
-			System.out.println("Service Time: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgServiceTime)).getAverage());
-			System.out.println("Throughput: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().throughput)).getAverage());
+			InteractionMetrics metrics = new InteractionMetrics();
+		    metrics.sci = simResults.stream()
+		            .mapToDouble(r -> r.interactionResults.stream()
+		                    .filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgSCI)
+		            .average().orElse(0);
+		    metrics.serviceTime = simResults.stream()
+		            .mapToDouble(r -> r.interactionResults.stream()
+		                    .filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgServiceTime)
+		            .average().orElse(0);
+		    metrics.throughput = simResults.stream()
+		            .mapToLong(r -> r.interactionResults.stream()
+		                    .filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().throughput)
+		            .average().orElse(0);
+
+		    result.interactions.put(interaction, metrics);
 		}
-		System.out.println("------------------");
+
 		for(String device : hostRecap.stream().map(NamedHost::getName).distinct().collect(Collectors.toList())) {
-			System.out.println("- " + device + " ->");
-			System.out.println("SCI: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgSCI)).getAverage());
-			System.out.println("Service Time: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgServiceTime)).getAverage());
-			System.out.println("Throughput: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().throughput)).getAverage());
-			System.out.println("Utilization: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgUtilization)).getAverage());
-			System.out.println("Dropped Connections: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().droppedConnections)).getAverage());
+			ServerMetrics metrics = new ServerMetrics();
+		    metrics.sci = simResults.stream()
+		            .mapToDouble(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgSCI)
+		            .average().orElse(0);
+		    metrics.serviceTime = simResults.stream()
+		            .mapToDouble(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgServiceTime)
+		            .average().orElse(0);
+		    metrics.throughput = simResults.stream()
+		            .mapToLong(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().throughput)
+		            .average().orElse(0);
+		    metrics.utilization = simResults.stream()
+		            .mapToDouble(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgUtilization)
+		            .average().orElse(0);
+		    metrics.droppedConnections = simResults.stream()
+		            .mapToLong(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().droppedConnections)
+		            .average().orElse(0);
+
+		    result.servers.put(device, metrics);
+		}
+		
+		try {
+			mapper.writeValue(new File("[packageName/].json"), result);
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
 	}
 
@@ -237,6 +280,8 @@ import org.cloudsimplus.resources.Pe;
 import org.cloudsimplus.utilizationmodels.UtilizationModel;
 import org.cloudsimplus.vms.Vm;
 import org.cloudsimplus.vms.VmSimple;
+
+import com.fasterxml.jackson.annotation.JsonProperty;
 
 class NamedHost extends HostSimple {
 	private String name;
@@ -585,12 +630,39 @@ class SimulationResult {
 	}
 }
 
+class ResultSummary {
+    public Map<String, InteractionMetrics> interactions = new LinkedHashMap<>();
+    public Map<String, ServerMetrics> servers = new LinkedHashMap<>();
+}
+
+class InteractionMetrics {
+    @JsonProperty("SCI")
+    public double sci;
+    @JsonProperty("Service Time")
+    public double serviceTime;
+    @JsonProperty("Throughput")
+    public double throughput;
+}
+
+class ServerMetrics {
+    @JsonProperty("SCI")
+    public double sci;
+    @JsonProperty("Service Time")
+    public double serviceTime;
+    @JsonProperty("Throughput")
+    public double throughput;
+    @JsonProperty("Utilization")
+    public double utilization;
+    @JsonProperty("Dropped Connections")
+    public double droppedConnections;
+}
+
 class Utils {
 	static Random rng = new Random();
 	static Map<String, Integer> gcis = new HashMap<>();
 	static final int EXEC_TIME = 3600;
 	static final double EXP_LAMBDA = 2;
-	static final int REPETITIONS = 20;
+	static final int REPETITIONS = [repetitions/];
 	
 	static {
 		String currentRegion = null;

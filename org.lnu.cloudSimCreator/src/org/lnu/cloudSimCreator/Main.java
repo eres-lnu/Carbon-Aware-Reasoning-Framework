@@ -153,6 +153,7 @@ public class Main extends AbstractAcceleoGenerator {
      */
     public static void main(String[] args) {
     	String BUTTON_LABEL = "Create and Run Simulation";
+    	
         // Create main window
         JFrame frame = new JFrame("SCARF");
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -167,6 +168,7 @@ public class Main extends AbstractAcceleoGenerator {
         JButton browseButton = new JButton("Browse UML Architecture Description...");
         browseButton.addActionListener(e -> {
             JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Select the UML Architecture Description");
             FileNameExtensionFilter filter = new FileNameExtensionFilter("UML models", "uml");
             fileChooser.setAcceptAllFileFilterUsed(false);
             fileChooser.setFileFilter(filter);
@@ -195,23 +197,58 @@ public class Main extends AbstractAcceleoGenerator {
         System.setOut(ps);
         System.setErr(ps);
 
+        // Repetitions input field
+        JLabel repetitionsInputLabel = new JLabel("Choose the number of simulation repetitions:");
+        JSpinner repetitionsSpinner = new JSpinner(new SpinnerNumberModel(20, 2, 100, 1));
+        
+     // Text field for output path
+        JTextField outputPathField = new JTextField();
+        outputPathField.setEditable(false);
+        
+     // Browse output button
+        JButton browseOutputButton = new JButton("Select a folder for the simulation output...");
+        browseOutputButton.addActionListener(e -> {
+            JFileChooser fileChooser = new JFileChooser();
+            fileChooser.setDialogTitle("Select the output folder");
+            fileChooser.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
+            fileChooser.setAcceptAllFileFilterUsed(false);
+            int result = fileChooser.showOpenDialog(frame);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                File selectedFile = fileChooser.getSelectedFile();
+                outputPathField.setText(selectedFile.getAbsolutePath());
+                outputPathField.setCaretPosition(0);
+                outputPathField.setEnabled(false);
+            }
+        });
+        
         // Run button
         JButton runButton = new JButton(BUTTON_LABEL);
         runButton.addActionListener(e -> {
 	        	String filePath = filePathField.getText();
+	        	String outPath = outputPathField.getText();
 	        	if(filePath.isEmpty()) {
 	                JOptionPane.showMessageDialog(frame, "Please select a file first.", "Error", JOptionPane.ERROR_MESSAGE);
+	                return;
+	            }
+	        	if(outPath.isEmpty()) {
+	                JOptionPane.showMessageDialog(frame, "Please select where to save the simulation output.", "Error", JOptionPane.ERROR_MESSAGE);
+	                return;
+	            }
+	        	if(!Files.isWritable(Paths.get(outPath))) {
+	                JOptionPane.showMessageDialog(frame, "You don't have write permissions for the chosen output path.", "Error", JOptionPane.ERROR_MESSAGE);
 	                return;
 	            }
 	        	runButton.setEnabled(false);
 	        	runButton.setText("Running the interpretation...");
 	        	runButton.repaint();
 	        	browseButton.setEnabled(false);
+	        	browseOutputButton.setEnabled(false);
+	        	repetitionsSpinner.setEnabled(false);
 	        	SwingUtilities.invokeLater(() -> {
 		        	new Thread(() -> {
 			            try {
 			            	System.out.println("Generating an interpretation of " + filePath);
-			                interpretation(filePath);
+			                interpretation(filePath, outPath, (int) repetitionsSpinner.getValue());
 			                JOptionPane.showMessageDialog(frame, "Simulation successfully completed", "Information", JOptionPane.INFORMATION_MESSAGE, fetchLogo(64));
 			            } catch (Exception ex) {
 			            	JOptionPane.showMessageDialog(frame, ex.getMessage(), "Exception caught", JOptionPane.ERROR_MESSAGE);
@@ -221,11 +258,12 @@ public class Main extends AbstractAcceleoGenerator {
 			        		runButton.setEnabled(true);
 			        		runButton.setText(BUTTON_LABEL);
 			        		browseButton.setEnabled(true);
+			        		browseOutputButton.setEnabled(true);
+			        		repetitionsSpinner.setEnabled(true);
 			        	});
 			        }).start();
 	        	});
         });
-        	
 
         // Top panel for file selection
         JPanel topPanel = new JPanel(new BorderLayout(5, 5));
@@ -234,11 +272,23 @@ public class Main extends AbstractAcceleoGenerator {
 
         // Bottom panel for RUN button
         JPanel bottomPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT));
+        bottomPanel.add(repetitionsInputLabel);
+        bottomPanel.add(repetitionsSpinner);
         bottomPanel.add(runButton);
+        
+        // Center panel for console and output selection
+        JPanel centerContainer = new JPanel();
+        centerContainer.setLayout(new BorderLayout(5, 5));
+        centerContainer.add(scrollPane, BorderLayout.CENTER);
+        JPanel middlePanel = new JPanel(new BorderLayout());
+        middlePanel.add(outputPathField, BorderLayout.CENTER);
+        middlePanel.add(browseOutputButton, BorderLayout.EAST);
+        centerContainer.add(middlePanel, BorderLayout.SOUTH);
+        
 
         // Layout setup
         frame.add(topPanel, BorderLayout.NORTH);
-        frame.add(scrollPane, BorderLayout.CENTER);
+        frame.add(centerContainer, BorderLayout.CENTER);
         frame.add(bottomPanel, BorderLayout.SOUTH);
 
         frame.setLocationRelativeTo(null); // Center
@@ -266,7 +316,7 @@ public class Main extends AbstractAcceleoGenerator {
      * @throws MavenInvocationException 
      * @generated NOT
      */
-    public static void interpretation(String modelPath) throws IOException, MavenInvocationException{
+    public static void interpretation(String modelPath, String outPath, int repetitions) throws IOException, MavenInvocationException{
     	/*
     	 * Check that the parameter is a valid UML model and create its URI
     	 */
@@ -293,9 +343,7 @@ public class Main extends AbstractAcceleoGenerator {
     	 */
     	Path projectDirectory = Files.createTempDirectory(projectName);
     	PROJECT_ROOT = projectDirectory.toAbsolutePath().toString();
-    	System.out.println(PROJECT_ROOT);
-    	//System.exit(0);
-    	// String projectRoot = ".." + File.separator + projectName;
+    	System.out.println("Temporary directory created at: " + PROJECT_ROOT);
     	List<String> mavenDirectories = new ArrayList<>(Arrays.asList(
     		"src" + File.separator + "main" + File.separator + "java",
     		"src" + File.separator + "main" + File.separator + "resources",
@@ -321,8 +369,9 @@ public class Main extends AbstractAcceleoGenerator {
     	/*
     	 * Launch the Acceleo transformation, passing the package name as argument and registering the profile
     	 */
-    	List<String> acceleoArguments = new ArrayList<String>();
+    	List<Object> acceleoArguments = new ArrayList<Object>();
     	acceleoArguments.add(packageName);
+    	acceleoArguments.add(repetitions);
     	ResourceSet rs = new ResourceSetImpl();
     	UMLResourcesUtil.init(rs);
         /*URL profileURL = Thread.currentThread().getContextClassLoader().getResource("sci-uml.profile.uml");
@@ -375,6 +424,10 @@ public class Main extends AbstractAcceleoGenerator {
     	request.setErrorHandler(System.err::println);
     	Invoker invoker = new DefaultInvoker();
     	invoker.execute(request);
+    	/*
+    	 * Copy the output JSON from the temporary folder to the selected output path
+    	 */
+    	Files.copy(projectDirectory.resolve(packageName + ".json"), Paths.get(outPath).resolve(packageName + ".json"), StandardCopyOption.REPLACE_EXISTING);
     	/*
     	 * Clean up
     	 */

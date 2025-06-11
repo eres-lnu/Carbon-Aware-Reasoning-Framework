@@ -1,5 +1,7 @@
 package lnu.se.cloud.playground;
 
+import java.io.File;
+import java.io.IOException;
 import java.util.*;
 import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
@@ -15,6 +17,9 @@ import org.cloudsimplus.schedulers.cloudlet.CloudletSchedulerSpaceShared;
 import org.cloudsimplus.utilizationmodels.UtilizationModelDynamic;
 import org.cloudsimplus.utilizationmodels.UtilizationModelFull;
 import org.cloudsimplus.vms.Vm;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 
 public class Uscloudsoftware {
 
@@ -33,20 +38,59 @@ public class Uscloudsoftware {
 			new Uscloudsoftware();
 			simResults.add(new SimulationResult(cloudletList, hostRecap));
 		}
+		
+		ObjectMapper mapper = new ObjectMapper();
+		mapper.enable(SerializationFeature.INDENT_OUTPUT);
+		ResultSummary result = new ResultSummary();
+		
 		for(String interaction : simResults.get(0).interactionResults.stream().map(i -> i.interactionName).distinct().collect(Collectors.toList())) {
-			System.out.println("- " + interaction + " ->");
-			System.out.println("SCI: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgSCI)).getAverage());
-			System.out.println("Service Time: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgServiceTime)).getAverage());
-			System.out.println("Throughput: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.interactionResults.stream().filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().throughput)).getAverage());
+			InteractionMetrics metrics = new InteractionMetrics();
+		    metrics.sci = simResults.stream()
+		            .mapToDouble(r -> r.interactionResults.stream()
+		                    .filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgSCI)
+		            .average().orElse(0);
+		    metrics.serviceTime = simResults.stream()
+		            .mapToDouble(r -> r.interactionResults.stream()
+		                    .filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().avgServiceTime)
+		            .average().orElse(0);
+		    metrics.throughput = simResults.stream()
+		            .mapToLong(r -> r.interactionResults.stream()
+		                    .filter(ir -> ir.interactionName.equals(interaction)).findFirst().get().throughput)
+		            .average().orElse(0);
+
+		    result.interactions.put(interaction, metrics);
 		}
-		System.out.println("------------------");
+
 		for(String device : hostRecap.stream().map(NamedHost::getName).distinct().collect(Collectors.toList())) {
-			System.out.println("- " + device + " ->");
-			System.out.println("SCI: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgSCI)).getAverage());
-			System.out.println("Service Time: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgServiceTime)).getAverage());
-			System.out.println("Throughput: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().throughput)).getAverage());
-			System.out.println("Utilization: " + simResults.stream().collect(Collectors.summarizingDouble(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgUtilization)).getAverage());
-			System.out.println("Dropped Connections: " + simResults.stream().collect(Collectors.summarizingLong(r -> r.deviceResults.stream().filter(dr -> dr.deviceName.equals(device)).findFirst().get().droppedConnections)).getAverage());
+			ServerMetrics metrics = new ServerMetrics();
+		    metrics.sci = simResults.stream()
+		            .mapToDouble(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgSCI)
+		            .average().orElse(0);
+		    metrics.serviceTime = simResults.stream()
+		            .mapToDouble(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgServiceTime)
+		            .average().orElse(0);
+		    metrics.throughput = simResults.stream()
+		            .mapToLong(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().throughput)
+		            .average().orElse(0);
+		    metrics.utilization = simResults.stream()
+		            .mapToDouble(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().avgUtilization)
+		            .average().orElse(0);
+		    metrics.droppedConnections = simResults.stream()
+		            .mapToLong(r -> r.deviceResults.stream()
+		                    .filter(dr -> dr.deviceName.equals(device)).findFirst().get().droppedConnections)
+		            .average().orElse(0);
+
+		    result.servers.put(device, metrics);
+		}
+		
+		try {
+			mapper.writeValue(new File("uscloudsoftware.json"), result);
+		} catch (IOException e) {
+			e.printStackTrace();
 		}
 	}
 
